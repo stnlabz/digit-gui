@@ -1,6 +1,12 @@
 @echo off
 setlocal
 
+if /I "%~1"=="clean" goto clean
+if not "%~1"=="" (
+    echo Usage: build.cmd [clean]
+    exit /b 2
+)
+
 if not exist build mkdir build
 
 where cl >nul 2>nul
@@ -31,4 +37,14 @@ if errorlevel 1 (
 
 echo.
 echo BUILD GREEN: build\digit-gui.exe
+exit /b 0
+
+:clean
+echo Cleaning Digit GUI build...
+if exist build rmdir /S /Q build
+if exist build (
+    echo CLEAN FAILED.
+    exit /b 1
+)
+echo CLEAN GREEN.
 exit /b 0
