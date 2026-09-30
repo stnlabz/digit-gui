@@ -16,7 +16,7 @@ if errorlevel 1 (
 )
 
 echo Building Digit GUI...
-cl /nologo /std:c11 /W4 /O2 /D_CRT_SECURE_NO_WARNINGS src\main.c /Fe:build\digit-gui.exe /link winhttp.lib user32.lib gdi32.lib
+cl /nologo /std:c11 /W4 /O2 /D_CRT_SECURE_NO_WARNINGS src\main.c /Fe:build\digit-gui.exe /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup winhttp.lib user32.lib gdi32.lib
 if errorlevel 1 (
     echo BUILD FAILED.
     exit /b 1
