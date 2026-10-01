@@ -24,29 +24,35 @@ No Visual Studio solution or project files are required.
 
 Digit GUI talks only to the Digit Interface API on TCP port `8081`.
 
-Set the server address before launching:
+Connection settings are read from `digit.conf` beside `digit-gui.exe`:
 
-```cmd
-set DIGIT_HOST=192.0.2.10
-build\digit-gui.exe
+```text
+host=127.0.0.1
+port=8081
 ```
 
-If `DIGIT_HOST` is not set, the client defaults to `127.0.0.1`.
+The GUI does not connect directly to llama.cpp or Digit Core internals.
 
-The initial client uses:
+## Interface API
+
+Digit GUI uses:
 
 - `GET /health` for connection state.
-- `POST /ask` with `text/plain` for questions.
+- `GET /channels` for persistent discussion channels.
+- `POST /channels` to create a channel.
+- `GET /channels/{id}/messages` for channel history.
+- `POST /channels/{id}/ask` for channel-scoped conversation with Digit.
+- `GET /alerts?unacknowledged=1` for active operator alerts.
+- `POST /alerts/{id}/acknowledge` to acknowledge an alert without deleting its historical record.
 
-The GUI does not connect directly to llama.cpp.
+## GUI
 
-## Initial scope
+The main window contains three operational areas:
 
-The first milestone intentionally contains only what is needed for daily development interaction:
+- **Channels** on the left. Selecting a channel loads its retained discussion history. Type a channel name into the input field and use **New Channel** to create another room.
+- **Conversation** in the center. Questions are sent to the currently selected channel and both sides of the conversation are retained by Digit.
+- **Operator Alerts** on the right. Unacknowledged Core/module alerts remain visible until the operator explicitly acknowledges them.
 
-- conversation display;
-- question input;
-- Send button;
-- Digit answer display;
-- Connected / Offline status;
-- mandatory build-time self-test.
+The status line reports the active channel and current unacknowledged alert count.
+
+Digit GUI remains a thin client: channel state, conversation persistence, alerts, and acknowledgment state are owned by Digit Core and exposed through the Interface module.
