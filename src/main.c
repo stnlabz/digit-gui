@@ -55,6 +55,7 @@ static channel_item_t channels[CHANNEL_MAX];static size_t channel_count=0;
 static alert_item_t alerts[ALERT_MAX];static size_t alert_count=0;
 /* [AI:GPT-6 | 2026-10-09] No invisible legacy General selection. */
 static char active_channel[64]="";
+static char selected_org[64]="",selected_project[64]="";
 /* [AI:GPT-6 | 2026-10-08] Digit GUI 1.6.8: in-process bearer only.
  * No password or session token is written to configuration or disk. */
 static char session_token[129];
@@ -284,7 +285,7 @@ static void channel_navigation(const char *json){
    if(proj[0]){
     snprintf(display,sizeof(display),"   %s",!strcmp(proj,"operations")?"Operations":proj);
     {LRESULT row=SendMessageA(channel_list,LB_ADDSTRING,0,(LPARAM)display);
-     SendMessageA(channel_list,LB_SETITEMDATA,(WPARAM)row,(LPARAM)-1);}
+     SendMessageA(channel_list,LB_SETITEMDATA,(WPARAM)row,(LPARAM)(-2-(LRESULT)j));}
    }
    for(k=0;k<count;k++){
     LRESULT row;
@@ -541,30 +542,42 @@ job=(digit_request_job_t *)calloc(1,sizeof(*job));if(!job){append_output("Digit 
 static void create_channel(void){char name[128],response[2048];DWORD e,s;if(DialogBoxParamA(NULL,NULL,main_window,NULL,0))return;(void)name;(void)response;(void)e;(void)s;}
 /* [AI:GPT-6 | 2026-10-09] Raw Core channel creation does not
  * establish a project binding or ACL. Never present it as visible. */
+/* [AI:GPT-6 | 2026-10-09] Channel creation uses selected existing
+ * organization/project; raw Core orphan creation is never used by GUI. */
 static void prompt_new_channel(void){
- char name[128]="",response[2048]={0},message[384];
- DWORD error=0,status=0;
+ char name[128]="",body[256],response[2048]={0},message[384];
+ DWORD error=0,status=0;size_t i;
  if(!session_authenticated)return;
+ if(!selected_org[0]||!selected_project[0]){
+  MessageBoxA(main_window,"Select an existing project (such as Operations) in the sidebar first.",APP_TITLE,MB_OK|MB_ICONINFORMATION);return;
+ }
  if(GetWindowTextA(input_box,name,sizeof(name))<=0){
-  MessageBoxA(main_window,"Enter a channel name. For organization/project setup use Setup Channels.",APP_TITLE,MB_OK|MB_ICONINFORMATION);return;
+  MessageBoxA(main_window,"Enter the new channel name in the message field, then select New Channel.",APP_TITLE,MB_OK|MB_ICONINFORMATION);return;
  }
- if(strchr(name,'/')){
-  MessageBoxA(main_window,
-   "organization/project is not a channel name.\n\nFor example, stn-labz/ops belongs in Setup Channels.\nNew Channel alone does not establish project membership or access.",
-   APP_TITLE,MB_OK|MB_ICONINFORMATION);return;
+ if(strlen(name)>40){
+  MessageBoxA(main_window,"Channel names may contain up to 40 characters.",APP_TITLE,MB_OK|MB_ICONWARNING);return;
  }
- if(digit_request("POST","/channels",name,response,sizeof(response),10000,&error,&status)&&
-    strstr(response,"\"created\":true")){
+ for(i=0;name[i];i++){
+  unsigned char c=(unsigned char)name[i];
+  if(!((c>='a'&&c<='z')||(c>='A'&&c<='Z')||
+       (c>='0'&&c<='9')||c=='-'||c=='_')){
+   MessageBoxA(main_window,"Use letters, numbers, hyphens or underscores in channel names.",APP_TITLE,MB_OK|MB_ICONWARNING);return;
+  }
+ }
+ if(snprintf(body,sizeof(body),"%s\t%s\t%s",selected_org,selected_project,name)<=0)return;
+ if(digit_request("POST","/admin/channels",body,response,sizeof(response),10000,&error,&status)&&
+    strstr(response,"\"ready\":true")){
   SetWindowTextA(input_box,"");
   load_channels();
-  MessageBoxA(main_window,
-   "Channel created in Digit Core.\n\nIt will NOT appear in the sidebar until its project ownership and your channel access are established. Use the authorized project setup workflow; refreshing alone does not grant access.",
-   APP_TITLE,MB_OK|MB_ICONINFORMATION);
+  snprintf(message,sizeof(message),"Channel %s created under %s / %s and access verified.",
+           name,selected_org,selected_project);
+  MessageBoxA(main_window,message,APP_TITLE,MB_OK|MB_ICONINFORMATION);
  }else{
-  snprintf(message,sizeof(message),"Channel not created: HTTP %lu / WinHTTP %lu.",
-           (unsigned long)status,(unsigned long)error);
+  snprintf(message,sizeof(message),"Channel not ready: HTTP %lu / WinHTTP %lu.\n%.180s",
+           (unsigned long)status,(unsigned long)error,response);
   MessageBoxA(main_window,message,APP_TITLE,MB_OK|MB_ICONWARNING);
  }
+ SecureZeroMemory(body,sizeof(body));
 }
 /* [AI:GPT-6 | 2026-10-09] GUI 1.6.8: SA provisioning.
  * User enters organization/project; the server authenticates identity
@@ -731,7 +744,7 @@ case WM_CTLCOLORLISTBOX:{
  SetBkColor(dc,msg==WM_CTLCOLORSTATIC?DIGIT_BG:DIGIT_SURFACE);
  return (LRESULT)(msg==WM_CTLCOLORSTATIC?surface_brush:input_brush);
 }
-case WM_COMMAND:switch(LOWORD(wparam)){case ID_LOGIN:do_login();return 0;case ID_LOGOUT:do_logout();return 0;case ID_SA_CHECK:check_sa();return 0;case ID_NEW_PROJECT:setup_project_security();return 0;case ID_BIND_SECURITY:prompt_bind_security();return 0;case ID_LIST_PROJECTS:prompt_list_projects();return 0;case ID_SECURITY_GRANT:prompt_security_grant();return 0;case ID_SEND:send_question();SetFocus(input_box);return 0;case ID_CHANNELS:if(HIWORD(wparam)==LBN_SELCHANGE){LRESULT sel=SendMessageA(channel_list,LB_GETCURSEL,0,0);if(sel!=LB_ERR){LRESULT index=SendMessageA(channel_list,LB_GETITEMDATA,(WPARAM)sel,0);if(index!=LB_ERR&&index>=0&&(size_t)index<channel_count){strcpy_s(active_channel,sizeof(active_channel),channels[index].id);load_history();}}}return 0;case ID_NEW_CHANNEL:prompt_new_channel();return 0;case ID_ACK_ALERT:acknowledge_alert();return 0;case ID_REFRESH:refresh_all();return 0;}break;case WM_TIMER:if(wparam==ID_SYNC_TIMER){start_sync();return 0;}break;
+case WM_COMMAND:switch(LOWORD(wparam)){case ID_LOGIN:do_login();return 0;case ID_LOGOUT:do_logout();return 0;case ID_SA_CHECK:check_sa();return 0;case ID_NEW_PROJECT:setup_project_security();return 0;case ID_BIND_SECURITY:prompt_bind_security();return 0;case ID_LIST_PROJECTS:prompt_list_projects();return 0;case ID_SECURITY_GRANT:prompt_security_grant();return 0;case ID_SEND:send_question();SetFocus(input_box);return 0;case ID_CHANNELS:if(HIWORD(wparam)==LBN_SELCHANGE){LRESULT sel=SendMessageA(channel_list,LB_GETCURSEL,0,0);if(sel!=LB_ERR){LRESULT index=SendMessageA(channel_list,LB_GETITEMDATA,(WPARAM)sel,0);if(index!=LB_ERR&&index>=0&&(size_t)index<channel_count){strcpy_s(active_channel,sizeof(active_channel),channels[index].id);strcpy_s(selected_org,sizeof(selected_org),channels[index].organization);strcpy_s(selected_project,sizeof(selected_project),channels[index].project);load_history();}else if(index<=-2&&(size_t)(-2-index)<channel_count){size_t project_index=(size_t)(-2-index);strcpy_s(selected_org,sizeof(selected_org),channels[project_index].organization);strcpy_s(selected_project,sizeof(selected_project),channels[project_index].project);}}}return 0;case ID_NEW_CHANNEL:prompt_new_channel();return 0;case ID_ACK_ALERT:acknowledge_alert();return 0;case ID_REFRESH:refresh_all();return 0;}break;case WM_TIMER:if(wparam==ID_SYNC_TIMER){start_sync();return 0;}break;
 case WM_DIGIT_REFRESH:if(lparam){apply_sync((digit_sync_result_t *)lparam);}return 0;
 case WM_DIGIT_RESULT:{digit_result_t *result=(digit_result_t *)lparam;char message[512];EnableWindow(send_button,TRUE);if(result){if(result->ok){if(strcmp(result->channel_id,active_channel)==0)append_output("Digit",result->answer);}else if(result->http_status){snprintf(message,sizeof(message),"Digit returned HTTP status %lu.",(unsigned long)result->http_status);append_output("Digit GUI",message);}else{snprintf(message,sizeof(message),"Windows network error %lu while waiting for Digit.",(unsigned long)result->error);append_output("Digit GUI",message);}free(result);}SetFocus(input_box);return 0;}case WM_SIZE:{int w=LOWORD(lparam),h=HIWORD(lparam),left=170,right=0,center=w-left-48;
 MoveWindow(username_box,12,12,138,25,TRUE);MoveWindow(password_box,160,12,138,25,TRUE);
