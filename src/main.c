@@ -1053,7 +1053,29 @@ case WM_CTLCOLORLISTBOX:{
  SetBkColor(dc,msg==WM_CTLCOLORSTATIC?DIGIT_BG:DIGIT_SURFACE);
  return (LRESULT)(msg==WM_CTLCOLORSTATIC?surface_brush:input_brush);
 }
-case WM_COMMAND:switch(LOWORD(wparam)){case ID_LOGIN:do_login();return 0;case ID_LOGOUT:do_logout();return 0;case ID_SA_CHECK:check_sa();return 0;case ID_USERS_PANEL:sa_panel_open();return 0;case ID_NEW_PROJECT:setup_project_security();return 0;case ID_BIND_SECURITY:prompt_bind_security();return 0;case ID_LIST_PROJECTS:prompt_list_projects();return 0;case ID_SECURITY_GRANT:prompt_security_grant();return 0;case ID_SEND:send_question();SetFocus(input_box);return 0;case ID_CHANNELS:if(HIWORD(wparam)==LBN_SELCHANGE){LRESULT sel=SendMessageA(channel_list,LB_GETCURSEL,0,0);if(sel!=LB_ERR){LRESULT index=SendMessageA(channel_list,LB_GETITEMDATA,(WPARAM)sel,0);if(index!=LB_ERR&&index>=0&&(size_t)index<channel_count){strcpy_s(active_channel,sizeof(active_channel),channels[index].id);strcpy_s(selected_org,sizeof(selected_org),channels[index].organization);strcpy_s(selected_project,sizeof(selected_project),channels[index].project);load_history();}else if(index<=-2&&(size_t)(-2-index)<channel_count){size_t project_index=(size_t)(-2-index);strcpy_s(selected_org,sizeof(selected_org),channels[project_index].organization);strcpy_s(selected_project,sizeof(selected_project),channels[project_index].project);}}}return 0;case ID_NEW_CHANNEL:prompt_new_channel();return 0;case ID_ACK_ALERT:acknowledge_alert();return 0;case ID_REFRESH:refresh_all();return 0;}break;case WM_TIMER:if(wparam==ID_SYNC_TIMER){start_sync();return 0;}break;
+case WM_COMMAND:switch(LOWORD(wparam)){case ID_LOGIN:do_login();return 0;case ID_LOGOUT:do_logout();return 0;case ID_SA_CHECK:check_sa();return 0;case ID_USERS_PANEL:sa_panel_open();return 0;case ID_NEW_PROJECT:setup_project_security();return 0;case ID_BIND_SECURITY:prompt_bind_security();return 0;case ID_LIST_PROJECTS:prompt_list_projects();return 0;case ID_SECURITY_GRANT:prompt_security_grant();return 0;case ID_SEND:send_question();SetFocus(input_box);return 0;case ID_CHANNELS:if(HIWORD(wparam)==LBN_SELCHANGE){LRESULT sel=SendMessageA(channel_list,LB_GETCURSEL,0,0);if(sel!=LB_ERR){LRESULT index=SendMessageA(channel_list,LB_GETITEMDATA,(WPARAM)sel,0);if(index!=LB_ERR&&index>=0&&(size_t)index<channel_count){strcpy_s(active_channel,sizeof(active_channel),channels[index].id);strcpy_s(selected_org,sizeof(selected_org),channels[index].organization);strcpy_s(selected_project,sizeof(selected_project),channels[index].project);load_history();}else if(index<=-2&&(size_t)(-2-index)<channel_count){size_t project_index=(size_t)(-2-index);strcpy_s(selected_org,sizeof(selected_org),channels[project_index].organization);strcpy_s(selected_project,sizeof(selected_project),channels[project_index].project);}else if(index==-1){
+ char heading[240]="",scope[64]="";size_t k,unique=0,chosen=0;
+ SendMessageA(channel_list,LB_GETTEXT,(WPARAM)sel,(LPARAM)heading);
+ for(k=0;k<channel_count;k++){
+  const char *org=channels[k].organization;
+  const char *label=!strcmp(org,"stn-labz")?"STN-LABZ":
+    !strcmp(org,"team-chaos")?"Team ChAoS":org[0]?org:"Other Channels";
+  if(!strcmp(heading,label)){strcpy_s(scope,sizeof(scope),org);break;}
+ }
+ selected_org[0]=0;selected_project[0]=0;
+ if(scope[0]){
+  strcpy_s(selected_org,sizeof(selected_org),scope);
+  for(k=0;k<channel_count;k++){
+   size_t j;int prior=0;
+   if(strcmp(channels[k].organization,scope)||!channels[k].project[0])continue;
+   for(j=0;j<k;j++)
+    if(!strcmp(channels[j].organization,scope)&&
+       !strcmp(channels[j].project,channels[k].project)){prior=1;break;}
+   if(!prior){chosen=k;unique++;}
+  }
+  if(unique==1)strcpy_s(selected_project,sizeof(selected_project),channels[chosen].project);
+ }
+}}}return 0;case ID_NEW_CHANNEL:prompt_new_channel();return 0;case ID_ACK_ALERT:acknowledge_alert();return 0;case ID_REFRESH:refresh_all();return 0;}break;case WM_TIMER:if(wparam==ID_SYNC_TIMER){start_sync();return 0;}break;
 case WM_DIGIT_REFRESH:if(lparam){apply_sync((digit_sync_result_t *)lparam);}return 0;
 case WM_DIGIT_RESULT:{digit_result_t *result=(digit_result_t *)lparam;char message[512];EnableWindow(send_button,TRUE);if(result){if(result->ok){if(strcmp(result->channel_id,active_channel)==0)append_output("Digit",result->answer);}else if(result->http_status){snprintf(message,sizeof(message),"Digit returned HTTP status %lu.",(unsigned long)result->http_status);append_output("Digit GUI",message);}else{snprintf(message,sizeof(message),"Windows network error %lu while waiting for Digit.",(unsigned long)result->error);append_output("Digit GUI",message);}free(result);}SetFocus(input_box);return 0;}case WM_SIZE:{int w=LOWORD(lparam),h=HIWORD(lparam),left=170,right=0,center=w-left-48;
 MoveWindow(username_box,12,12,138,25,TRUE);MoveWindow(password_box,160,12,138,25,TRUE);
