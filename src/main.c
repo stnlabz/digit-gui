@@ -382,10 +382,21 @@ static void load_channels(void){
 static void load_main_users(void){
  char body[160],reply[16384]={0},user[64],line[128],record[512];
  const char *cursor,*end;DWORD error=0,status=0;unsigned count=0;
+ int general_channel=0;size_t k;
  if(!main_users_list||!main_users_heading)return;
  SendMessageA(main_users_list,LB_RESETCONTENT,0,0);
  if(!session_authenticated||!selected_org[0]||!selected_project[0]){
   SetWindowTextA(main_users_heading,"Users - select a project");return;
+ }
+ /* [AI:GPT-6 | 2026-10-09] Digit is a native #General participant.
+  * Invoking Digit from other channels is supported by send_question()
+  * independently of this presentation-only list. */
+ for(k=0;k<channel_count;k++)if(!strcmp(channels[k].id,active_channel)){
+  const char *name=channels[k].name;
+  const char *last=strrchr(name,'-');
+  general_channel=(!strcmp(name,"General")||!strcmp(name,"general")||
+    (last&&(!strcmp(last+1,"General")||!strcmp(last+1,"general"))));
+  break;
  }
  snprintf(line,sizeof(line),"Users - %s / %s",selected_org,selected_project);
  SetWindowTextA(main_users_heading,line);
@@ -395,6 +406,9 @@ static void load_main_users(void){
   SendMessageA(main_users_list,LB_ADDSTRING,0,(LPARAM)
    (status==403?"Restricted - SA access required":"Directory unavailable"));
   return;
+ }
+ if(general_channel){
+  SendMessageA(main_users_list,LB_ADDSTRING,0,(LPARAM)"Digit  [AI]");count++;
  }
  cursor=strstr(reply,"\"members\":[");
  if(!cursor){SendMessageA(main_users_list,LB_ADDSTRING,0,(LPARAM)"Invalid directory response");return;}
@@ -411,7 +425,7 @@ static void load_main_users(void){
   }
   cursor=end+1;
  }
- if(!count)SendMessageA(main_users_list,LB_ADDSTRING,0,(LPARAM)"No human members listed");
+ if(!count)SendMessageA(main_users_list,LB_ADDSTRING,0,(LPARAM)"No members listed");
 }
 static void load_history(void){char path[256],response[BUFFER_MAX],origin[64],body[4096];DWORD e,s;const char *p;if(!active_channel[0])return;snprintf(path,sizeof(path),"/channels/%s/messages",active_channel);SetWindowTextW(output_box,L"");if(!digit_request("GET",path,NULL,response,sizeof(response),10000,&e,&s))return;p=response;while((p=strstr(p,"\"origin\":\""))!=NULL){if(!json_string_after(p,"origin",origin,sizeof(origin))||!json_string_after(p,"body",body,sizeof(body)))break;append_output(strcmp(origin,"digit")==0?"Digit":strcmp(origin,"operator")==0?"You":origin,body);p+=10;}}
 static void load_alerts(void){char response[BUFFER_MAX],id[64],severity[16],summary[256],display[384];DWORD e,s;const char *p;size_t count=0;SendMessageA(alerts_list,LB_RESETCONTENT,0,0);if(!digit_request("GET","/alerts",NULL,response,sizeof(response),10000,&e,&s))return;p=response;while(count<ALERT_MAX&&(p=strstr(p,"\"id\":\""))!=NULL){if(!json_string_after(p,"id",id,sizeof(id))||!json_string_after(p,"severity",severity,sizeof(severity))||!json_string_after(p,"summary",summary,sizeof(summary)))break;strcpy_s(alerts[count].id,sizeof(alerts[count].id),id);strcpy_s(alerts[count].severity,sizeof(alerts[count].severity),severity);strcpy_s(alerts[count].summary,sizeof(alerts[count].summary),summary);{
