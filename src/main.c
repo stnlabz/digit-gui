@@ -7,8 +7,8 @@
 
 #pragma comment(lib,"winhttp.lib")
 
-#define DIGIT_GUI_VERSION "1.5.8"
-#define APP_TITLE "Digit GUI 1.5.8"
+#define DIGIT_GUI_VERSION "1.5.9"
+#define APP_TITLE "Digit GUI 1.5.9"
 #define ID_CHANNELS 1001
 #define ID_OUTPUT 1002
 #define ID_INPUT 1003
@@ -23,6 +23,7 @@
 #define ID_SA_CHECK 1012
 #define ID_USERNAME 1013
 #define ID_PASSWORD 1014
+#define ID_NEW_PROJECT 1015
 #define BUFFER_MAX 65536
 #define CHANNEL_MAX 128
 #define ALERT_MAX 256
@@ -35,19 +36,19 @@ typedef struct{char id[64];char severity[16];char summary[256];int acknowledged;
 typedef struct{int ok;DWORD error;DWORD http_status;char answer[4096];char channel_id[64];} digit_result_t;
 typedef struct{char question[4096];char channel_id[64];} digit_request_job_t;
 
-static HWND main_window,channel_list,output_box,input_box,send_button,status_text,new_channel_button,alerts_list,ack_button,refresh_button,username_box,password_box,login_button,logout_button,sa_button;
+static HWND main_window,channel_list,output_box,input_box,send_button,status_text,new_channel_button,alerts_list,ack_button,refresh_button,username_box,password_box,login_button,logout_button,sa_button,new_project_button;
 static char digit_host[256]="127.0.0.1";
 static INTERNET_PORT digit_port=8081;
 static channel_item_t channels[CHANNEL_MAX];static size_t channel_count=0;
 static alert_item_t alerts[ALERT_MAX];static size_t alert_count=0;
 static char active_channel[64]="general";
-/* [AI:GPT-6 | 2026-10-08] Digit GUI 1.5.8: in-process bearer only.
+/* [AI:GPT-6 | 2026-10-08] Digit GUI 1.5.9: in-process bearer only.
  * No password or session token is written to configuration or disk. */
 static char session_token[129];
 static char session_identity[64];
 static int session_authenticated=0;
 static void clear_session(void){SecureZeroMemory(session_token,sizeof(session_token));SecureZeroMemory(session_identity,sizeof(session_identity));session_authenticated=0;}
-static void set_access_controls(int enabled){EnableWindow(channel_list,enabled);EnableWindow(output_box,enabled);EnableWindow(input_box,enabled);EnableWindow(send_button,enabled);EnableWindow(new_channel_button,enabled);EnableWindow(alerts_list,enabled);EnableWindow(ack_button,enabled);EnableWindow(refresh_button,enabled);EnableWindow(logout_button,enabled);EnableWindow(sa_button,enabled);}
+static void set_access_controls(int enabled){EnableWindow(channel_list,enabled);EnableWindow(output_box,enabled);EnableWindow(input_box,enabled);EnableWindow(send_button,enabled);EnableWindow(new_channel_button,enabled);EnableWindow(alerts_list,enabled);EnableWindow(ack_button,enabled);EnableWindow(refresh_button,enabled);EnableWindow(logout_button,enabled);EnableWindow(sa_button,enabled);EnableWindow(new_project_button,enabled);}
 
 
 static void trim_line(char *text){size_t n;if(!text)return;n=strlen(text);while(n>0&&(text[n-1]=='\r'||text[n-1]=='\n'||text[n-1]==' '||text[n-1]=='\t'))text[--n]=0;}
@@ -56,7 +57,7 @@ static int load_config(void){FILE *stream;char path[MAX_PATH],line[512];int have
 static void append_output(const char *speaker,const char *text){char line[8192];WCHAR wide[8192];int length;snprintf(line,sizeof(line),"%s: %s\r\n\r\n",speaker,text);if(!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,line,-1,wide,(int)(sizeof(wide)/sizeof(wide[0]))))return;length=GetWindowTextLengthW(output_box);SendMessageW(output_box,EM_SETSEL,(WPARAM)length,(LPARAM)length);SendMessageW(output_box,EM_REPLACESEL,FALSE,(LPARAM)wide);}
 static int json_string_after(const char *start,const char *key,char *out,size_t n){char pattern[128];const char *p;size_t o=0;snprintf(pattern,sizeof(pattern),"\"%s\":\"",key);p=strstr(start,pattern);if(!p)return 0;p+=strlen(pattern);while(*p&&o+1<n){if(*p=='"')break;if(*p=='\\'&&p[1]){++p;if(*p=='n')out[o++]='\n';else if(*p=='t')out[o++]='\t';else if(*p!='r')out[o++]=*p;++p;continue;}out[o++]=*p++;}out[o]=0;return *p=='"';}
 static int extract_answer(const char *json,char *answer,size_t n){return json_string_after(json,"answer",answer,n);}
-static int digit_request(const char *method,const char *path,const char *body,char *response,size_t response_size,DWORD receive_timeout,DWORD *error_out,DWORD *status_out){WCHAR host_w[256],path_w[512],method_w[16];HINTERNET session=NULL,connection=NULL,request=NULL;DWORD status=0,status_size=sizeof(status),available=0,read=0;size_t used=0;int ok=0;DWORD error=ERROR_SUCCESS;if(error_out)*error_out=0;if(status_out)*status_out=0;if(!MultiByteToWideChar(CP_UTF8,0,digit_host,-1,host_w,256)||!MultiByteToWideChar(CP_UTF8,0,path,-1,path_w,512)||!MultiByteToWideChar(CP_UTF8,0,method,-1,method_w,16)){error=GetLastError();goto done;}session=WinHttpOpen(L"Digit GUI/1.5.8",WINHTTP_ACCESS_TYPE_NO_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);if(!session){error=GetLastError();goto done;}if(!WinHttpSetTimeouts(session,5000,5000,10000,(int)receive_timeout)){error=GetLastError();goto done;}connection=WinHttpConnect(session,host_w,digit_port,0);if(!connection){error=GetLastError();goto done;}request=WinHttpOpenRequest(connection,method_w,path_w,NULL,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE);if(!request){error=GetLastError();goto done;}/* [AI:GPT-6 | 2026-10-08] Attach bearer only for authenticated API calls;
+static int digit_request(const char *method,const char *path,const char *body,char *response,size_t response_size,DWORD receive_timeout,DWORD *error_out,DWORD *status_out){WCHAR host_w[256],path_w[512],method_w[16];HINTERNET session=NULL,connection=NULL,request=NULL;DWORD status=0,status_size=sizeof(status),available=0,read=0;size_t used=0;int ok=0;DWORD error=ERROR_SUCCESS;if(error_out)*error_out=0;if(status_out)*status_out=0;if(!MultiByteToWideChar(CP_UTF8,0,digit_host,-1,host_w,256)||!MultiByteToWideChar(CP_UTF8,0,path,-1,path_w,512)||!MultiByteToWideChar(CP_UTF8,0,method,-1,method_w,16)){error=GetLastError();goto done;}session=WinHttpOpen(L"Digit GUI/1.5.9",WINHTTP_ACCESS_TYPE_NO_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);if(!session){error=GetLastError();goto done;}if(!WinHttpSetTimeouts(session,5000,5000,10000,(int)receive_timeout)){error=GetLastError();goto done;}connection=WinHttpConnect(session,host_w,digit_port,0);if(!connection){error=GetLastError();goto done;}request=WinHttpOpenRequest(connection,method_w,path_w,NULL,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE);if(!request){error=GetLastError();goto done;}/* [AI:GPT-6 | 2026-10-08] Attach bearer only for authenticated API calls;
  * login never transmits a previous token. */
 if(session_authenticated && strcmp(path,"/session/login")!=0){
     WCHAR auth_header[240];
@@ -122,7 +123,7 @@ static void do_logout(void){
     SendMessageA(channel_list,LB_RESETCONTENT,0,0);SendMessageA(alerts_list,LB_RESETCONTENT,0,0);
     SetWindowTextW(output_box,L"");SetWindowTextA(status_text,"Signed out");
 }
-/* [AI:GPT-6 | 2026-10-08] Interface 1.5.8 read-only SA dashboard.
+/* [AI:GPT-6 | 2026-10-08] Interface 1.5.9 read-only SA dashboard.
  * Show server-returned aggregates; never infer authority from the GUI. */
 static void check_sa(void){
     char response[1024],dialog[512];
@@ -161,6 +162,32 @@ static DWORD WINAPI ask_worker(LPVOID parameter){digit_request_job_t *job=(digit
 static void send_question(void){digit_request_job_t *job;HANDLE thread;char question[4096];GetWindowTextA(input_box,question,sizeof(question));if(!question[0]||!active_channel[0])return;job=(digit_request_job_t *)calloc(1,sizeof(*job));if(!job){append_output("Digit GUI","Unable to allocate request.");return;}strcpy_s(job->question,sizeof(job->question),question);strcpy_s(job->channel_id,sizeof(job->channel_id),active_channel);append_output("You",question);SetWindowTextA(input_box,"");SetWindowTextA(status_text,"Waiting for Digit...");EnableWindow(send_button,FALSE);thread=CreateThread(NULL,0,ask_worker,job,0,NULL);if(!thread){free(job);EnableWindow(send_button,TRUE);append_output("Digit GUI","Unable to start request thread.");return;}CloseHandle(thread);}
 static void create_channel(void){char name[128],response[2048];DWORD e,s;if(DialogBoxParamA(NULL,NULL,main_window,NULL,0))return;(void)name;(void)response;(void)e;(void)s;}
 static void prompt_new_channel(void){char name[128]="";if(GetWindowTextA(input_box,name,sizeof(name))<=0){MessageBoxA(main_window,"Type the new channel name in the input box, then click New Channel.",APP_TITLE,MB_OK|MB_ICONINFORMATION);return;}if(name[0]){char response[2048];DWORD e,s;if(digit_request("POST","/channels",name,response,sizeof(response),10000,&e,&s)){SetWindowTextA(input_box,"");load_channels();MessageBoxA(main_window,"Channel created. Channel visibility requires a separately authorized ACL assignment.",APP_TITLE,MB_OK|MB_ICONINFORMATION);}else {char msg[180];snprintf(msg,sizeof(msg),"Channel creation failed: HTTP %lu, WinHTTP %lu.",(unsigned long)s,(unsigned long)e);MessageBoxA(main_window,msg,APP_TITLE,MB_OK|MB_ICONERROR);}}}
+/* [AI:GPT-6 | 2026-10-09] GUI 1.5.9: SA provisioning.
+ * User enters organization/project; the server authenticates identity
+ * and verifies organization-specific SA assignment. */
+static void prompt_new_project(void){
+    char scope[160],body[160],response[512],message[256];
+    char *slash;
+    DWORD error=0,status=0;
+    if(!session_authenticated)return;
+    if(GetWindowTextA(input_box,scope,sizeof(scope))<=0){
+        MessageBoxA(main_window,"Enter organization/project in the input box.",APP_TITLE,MB_OK|MB_ICONINFORMATION);return;
+    }
+    slash=strchr(scope,'/');
+    if(!slash || slash==scope || !slash[1] || strchr(slash+1,'/')){
+        MessageBoxA(main_window,"Use organization/project (example: stn-labz/operations).",APP_TITLE,MB_OK|MB_ICONWARNING);return;
+    }
+    *slash=0;
+    if(snprintf(body,sizeof(body),"%s\t%s",scope,slash+1)<=0)return;
+    if(digit_request("POST","/admin/projects",body,response,sizeof(response),10000,&error,&status)){
+        SetWindowTextA(input_box,"");
+        MessageBoxA(main_window,"Project security workspace created. Channel binding and access grants remain separate protected operations.",APP_TITLE,MB_OK|MB_ICONINFORMATION);
+    }else{
+        snprintf(message,sizeof(message),"Project provisioning failed: HTTP %lu / WinHTTP %lu.",(unsigned long)status,(unsigned long)error);
+        MessageBoxA(main_window,message,APP_TITLE,MB_OK|MB_ICONWARNING);
+    }
+    SecureZeroMemory(body,sizeof(body));
+}
 static void acknowledge_alert(void){LRESULT sel=SendMessageA(alerts_list,LB_GETCURSEL,0,0);char path[256],response[4096];DWORD e,s;if(sel==LB_ERR||(size_t)sel>=alert_count)return;snprintf(path,sizeof(path),"/alerts/%s/acknowledge",alerts[sel].id);if(digit_request("POST",path,"",response,sizeof(response),10000,&e,&s))load_alerts();}
 static LRESULT CALLBACK window_proc(HWND hwnd,UINT msg,WPARAM wparam,LPARAM lparam){switch(msg){case WM_CREATE:main_window=hwnd;
 username_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL,12,12,138,25,hwnd,(HMENU)ID_USERNAME,NULL,NULL);
@@ -168,10 +195,11 @@ password_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|ES_P
 login_button=CreateWindowA("BUTTON","Log In",WS_CHILD|WS_VISIBLE,308,12,78,25,hwnd,(HMENU)ID_LOGIN,NULL,NULL);
 logout_button=CreateWindowA("BUTTON","Log Out",WS_CHILD|WS_VISIBLE,396,12,78,25,hwnd,(HMENU)ID_LOGOUT,NULL,NULL);
 sa_button=CreateWindowA("BUTTON","SA Access",WS_CHILD|WS_VISIBLE,484,12,90,25,hwnd,(HMENU)ID_SA_CHECK,NULL,NULL);
-channel_list=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|LBS_NOTIFY,12,12,170,310,hwnd,(HMENU)ID_CHANNELS,NULL,NULL);new_channel_button=CreateWindowA("BUTTON","New Channel",WS_CHILD|WS_VISIBLE,12,328,170,28,hwnd,(HMENU)ID_NEW_CHANNEL,NULL,NULL);output_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,194,12,560,390,hwnd,(HMENU)ID_OUTPUT,NULL,NULL);alerts_list=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|LBS_NOTIFY,766,12,250,310,hwnd,(HMENU)ID_ALERTS,NULL,NULL);ack_button=CreateWindowA("BUTTON","Acknowledge",WS_CHILD|WS_VISIBLE,766,328,120,28,hwnd,(HMENU)ID_ACK_ALERT,NULL,NULL);refresh_button=CreateWindowA("BUTTON","Refresh",WS_CHILD|WS_VISIBLE,896,328,120,28,hwnd,(HMENU)ID_REFRESH,NULL,NULL);input_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL,194,414,460,28,hwnd,(HMENU)ID_INPUT,NULL,NULL);send_button=CreateWindowA("BUTTON","Send",WS_CHILD|WS_VISIBLE|BS_DEFPUSHBUTTON,664,414,90,28,hwnd,(HMENU)ID_SEND,NULL,NULL);status_text=CreateWindowA("STATIC","Checking...",WS_CHILD|WS_VISIBLE,12,452,1000,20,hwnd,(HMENU)ID_STATUS,NULL,NULL);set_access_controls(FALSE);SetWindowTextA(status_text,"Sign in to Digit");SendMessageA(hwnd,WM_SIZE,0,MAKELPARAM(1040,560));return 0;case WM_COMMAND:switch(LOWORD(wparam)){case ID_LOGIN:do_login();return 0;case ID_LOGOUT:do_logout();return 0;case ID_SA_CHECK:check_sa();return 0;case ID_SEND:send_question();SetFocus(input_box);return 0;case ID_CHANNELS:if(HIWORD(wparam)==LBN_SELCHANGE){LRESULT sel=SendMessageA(channel_list,LB_GETCURSEL,0,0);if(sel!=LB_ERR&&(size_t)sel<channel_count){strcpy_s(active_channel,sizeof(active_channel),channels[sel].id);load_history();load_alerts();}}return 0;case ID_NEW_CHANNEL:prompt_new_channel();return 0;case ID_ACK_ALERT:acknowledge_alert();return 0;case ID_REFRESH:refresh_all();return 0;}break;case WM_DIGIT_RESULT:{digit_result_t *result=(digit_result_t *)lparam;char message[512];EnableWindow(send_button,TRUE);if(result){if(result->ok){if(strcmp(result->channel_id,active_channel)==0)append_output("Digit",result->answer);load_alerts();}else if(result->http_status){snprintf(message,sizeof(message),"Digit returned HTTP status %lu.",(unsigned long)result->http_status);append_output("Digit GUI",message);}else{snprintf(message,sizeof(message),"Windows network error %lu while waiting for Digit.",(unsigned long)result->error);append_output("Digit GUI",message);}free(result);}SetFocus(input_box);return 0;}case WM_SIZE:{int w=LOWORD(lparam),h=HIWORD(lparam),left=170,right=250,center=w-left-right-48;
+new_project_button=CreateWindowA("BUTTON","New Project",WS_CHILD|WS_VISIBLE,584,12,105,25,hwnd,(HMENU)ID_NEW_PROJECT,NULL,NULL);
+channel_list=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|LBS_NOTIFY,12,12,170,310,hwnd,(HMENU)ID_CHANNELS,NULL,NULL);new_channel_button=CreateWindowA("BUTTON","New Channel",WS_CHILD|WS_VISIBLE,12,328,170,28,hwnd,(HMENU)ID_NEW_CHANNEL,NULL,NULL);output_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,194,12,560,390,hwnd,(HMENU)ID_OUTPUT,NULL,NULL);alerts_list=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|LBS_NOTIFY,766,12,250,310,hwnd,(HMENU)ID_ALERTS,NULL,NULL);ack_button=CreateWindowA("BUTTON","Acknowledge",WS_CHILD|WS_VISIBLE,766,328,120,28,hwnd,(HMENU)ID_ACK_ALERT,NULL,NULL);refresh_button=CreateWindowA("BUTTON","Refresh",WS_CHILD|WS_VISIBLE,896,328,120,28,hwnd,(HMENU)ID_REFRESH,NULL,NULL);input_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL,194,414,460,28,hwnd,(HMENU)ID_INPUT,NULL,NULL);send_button=CreateWindowA("BUTTON","Send",WS_CHILD|WS_VISIBLE|BS_DEFPUSHBUTTON,664,414,90,28,hwnd,(HMENU)ID_SEND,NULL,NULL);status_text=CreateWindowA("STATIC","Checking...",WS_CHILD|WS_VISIBLE,12,452,1000,20,hwnd,(HMENU)ID_STATUS,NULL,NULL);set_access_controls(FALSE);SetWindowTextA(status_text,"Sign in to Digit");SendMessageA(hwnd,WM_SIZE,0,MAKELPARAM(1040,560));return 0;case WM_COMMAND:switch(LOWORD(wparam)){case ID_LOGIN:do_login();return 0;case ID_LOGOUT:do_logout();return 0;case ID_SA_CHECK:check_sa();return 0;case ID_NEW_PROJECT:prompt_new_project();return 0;case ID_SEND:send_question();SetFocus(input_box);return 0;case ID_CHANNELS:if(HIWORD(wparam)==LBN_SELCHANGE){LRESULT sel=SendMessageA(channel_list,LB_GETCURSEL,0,0);if(sel!=LB_ERR&&(size_t)sel<channel_count){strcpy_s(active_channel,sizeof(active_channel),channels[sel].id);load_history();load_alerts();}}return 0;case ID_NEW_CHANNEL:prompt_new_channel();return 0;case ID_ACK_ALERT:acknowledge_alert();return 0;case ID_REFRESH:refresh_all();return 0;}break;case WM_DIGIT_RESULT:{digit_result_t *result=(digit_result_t *)lparam;char message[512];EnableWindow(send_button,TRUE);if(result){if(result->ok){if(strcmp(result->channel_id,active_channel)==0)append_output("Digit",result->answer);load_alerts();}else if(result->http_status){snprintf(message,sizeof(message),"Digit returned HTTP status %lu.",(unsigned long)result->http_status);append_output("Digit GUI",message);}else{snprintf(message,sizeof(message),"Windows network error %lu while waiting for Digit.",(unsigned long)result->error);append_output("Digit GUI",message);}free(result);}SetFocus(input_box);return 0;}case WM_SIZE:{int w=LOWORD(lparam),h=HIWORD(lparam),left=170,right=250,center=w-left-right-48;
 MoveWindow(username_box,12,12,138,25,TRUE);MoveWindow(password_box,160,12,138,25,TRUE);
 MoveWindow(login_button,308,12,78,25,TRUE);MoveWindow(logout_button,396,12,78,25,TRUE);
-MoveWindow(sa_button,484,12,90,25,TRUE);
+MoveWindow(sa_button,484,12,90,25,TRUE);MoveWindow(new_project_button,584,12,105,25,TRUE);
 MoveWindow(channel_list,12,48,left,h-166,TRUE);MoveWindow(new_channel_button,12,h-112,left,28,TRUE);
 MoveWindow(output_box,194,48,center,h-128,TRUE);MoveWindow(input_box,194,h-68,center-102,28,TRUE);
 MoveWindow(send_button,194+center-90,h-68,90,28,TRUE);
