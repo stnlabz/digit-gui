@@ -7,8 +7,8 @@
 
 #pragma comment(lib,"winhttp.lib")
 
-#define DIGIT_GUI_VERSION "1.5.4"
-#define APP_TITLE "Digit GUI 1.5.4"
+#define DIGIT_GUI_VERSION "1.5.6"
+#define APP_TITLE "Digit GUI 1.5.6"
 #define ID_CHANNELS 1001
 #define ID_OUTPUT 1002
 #define ID_INPUT 1003
@@ -41,7 +41,7 @@ static INTERNET_PORT digit_port=8081;
 static channel_item_t channels[CHANNEL_MAX];static size_t channel_count=0;
 static alert_item_t alerts[ALERT_MAX];static size_t alert_count=0;
 static char active_channel[64]="general";
-/* [AI:GPT-6 | 2026-10-08] Digit GUI 1.5.4: in-process bearer only.
+/* [AI:GPT-6 | 2026-10-08] Digit GUI 1.5.6: in-process bearer only.
  * No password or session token is written to configuration or disk. */
 static char session_token[129];
 static char session_identity[64];
@@ -56,7 +56,7 @@ static int load_config(void){FILE *stream;char path[MAX_PATH],line[512];int have
 static void append_output(const char *speaker,const char *text){char line[8192];WCHAR wide[8192];int length;snprintf(line,sizeof(line),"%s: %s\r\n\r\n",speaker,text);if(!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,line,-1,wide,(int)(sizeof(wide)/sizeof(wide[0]))))return;length=GetWindowTextLengthW(output_box);SendMessageW(output_box,EM_SETSEL,(WPARAM)length,(LPARAM)length);SendMessageW(output_box,EM_REPLACESEL,FALSE,(LPARAM)wide);}
 static int json_string_after(const char *start,const char *key,char *out,size_t n){char pattern[128];const char *p;size_t o=0;snprintf(pattern,sizeof(pattern),"\"%s\":\"",key);p=strstr(start,pattern);if(!p)return 0;p+=strlen(pattern);while(*p&&o+1<n){if(*p=='"')break;if(*p=='\\'&&p[1]){++p;if(*p=='n')out[o++]='\n';else if(*p=='t')out[o++]='\t';else if(*p!='r')out[o++]=*p;++p;continue;}out[o++]=*p++;}out[o]=0;return *p=='"';}
 static int extract_answer(const char *json,char *answer,size_t n){return json_string_after(json,"answer",answer,n);}
-static int digit_request(const char *method,const char *path,const char *body,char *response,size_t response_size,DWORD receive_timeout,DWORD *error_out,DWORD *status_out){WCHAR host_w[256],path_w[512],method_w[16];HINTERNET session=NULL,connection=NULL,request=NULL;DWORD status=0,status_size=sizeof(status),available=0,read=0;size_t used=0;int ok=0;DWORD error=ERROR_SUCCESS;if(error_out)*error_out=0;if(status_out)*status_out=0;if(!MultiByteToWideChar(CP_UTF8,0,digit_host,-1,host_w,256)||!MultiByteToWideChar(CP_UTF8,0,path,-1,path_w,512)||!MultiByteToWideChar(CP_UTF8,0,method,-1,method_w,16)){error=GetLastError();goto done;}session=WinHttpOpen(L"Digit GUI/1.5.4",WINHTTP_ACCESS_TYPE_NO_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);if(!session){error=GetLastError();goto done;}if(!WinHttpSetTimeouts(session,5000,5000,10000,(int)receive_timeout)){error=GetLastError();goto done;}connection=WinHttpConnect(session,host_w,digit_port,0);if(!connection){error=GetLastError();goto done;}request=WinHttpOpenRequest(connection,method_w,path_w,NULL,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE);if(!request){error=GetLastError();goto done;}/* [AI:GPT-6 | 2026-10-08] Attach bearer only for authenticated API calls;
+static int digit_request(const char *method,const char *path,const char *body,char *response,size_t response_size,DWORD receive_timeout,DWORD *error_out,DWORD *status_out){WCHAR host_w[256],path_w[512],method_w[16];HINTERNET session=NULL,connection=NULL,request=NULL;DWORD status=0,status_size=sizeof(status),available=0,read=0;size_t used=0;int ok=0;DWORD error=ERROR_SUCCESS;if(error_out)*error_out=0;if(status_out)*status_out=0;if(!MultiByteToWideChar(CP_UTF8,0,digit_host,-1,host_w,256)||!MultiByteToWideChar(CP_UTF8,0,path,-1,path_w,512)||!MultiByteToWideChar(CP_UTF8,0,method,-1,method_w,16)){error=GetLastError();goto done;}session=WinHttpOpen(L"Digit GUI/1.5.6",WINHTTP_ACCESS_TYPE_NO_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);if(!session){error=GetLastError();goto done;}if(!WinHttpSetTimeouts(session,5000,5000,10000,(int)receive_timeout)){error=GetLastError();goto done;}connection=WinHttpConnect(session,host_w,digit_port,0);if(!connection){error=GetLastError();goto done;}request=WinHttpOpenRequest(connection,method_w,path_w,NULL,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE);if(!request){error=GetLastError();goto done;}/* [AI:GPT-6 | 2026-10-08] Attach bearer only for authenticated API calls;
  * login never transmits a previous token. */
 if(session_authenticated && strcmp(path,"/session/login")!=0){
     WCHAR auth_header[240];
@@ -122,13 +122,30 @@ static void do_logout(void){
     SendMessageA(channel_list,LB_RESETCONTENT,0,0);SendMessageA(alerts_list,LB_RESETCONTENT,0,0);
     SetWindowTextW(output_box,L"");SetWindowTextA(status_text,"Signed out");
 }
+/* [AI:GPT-6 | 2026-10-08] Interface 1.5.6 read-only SA dashboard.
+ * Show server-returned aggregates; never infer authority from the GUI. */
 static void check_sa(void){
-    char response[512];DWORD error=0,status=0;
+    char response[1024],dialog[512];
+    DWORD error=0,status=0;
+    unsigned long channels=0,alerts=0,unacknowledged=0;
     if(!session_authenticated)return;
-    if(digit_request("GET","/admin/access",NULL,response,sizeof(response),10000,&error,&status) &&
-       strstr(response,"\"authorized\":true") && strstr(response,"digit-operations-read"))
-        MessageBoxA(main_window,"Digit Core confirms SA read-access eligibility. Operational dashboard data is not yet exposed by Interface 1.5.5.",APP_TITLE,MB_OK|MB_ICONINFORMATION);
-    else MessageBoxA(main_window,"Digit Core did not authorize SA access.",APP_TITLE,MB_OK|MB_ICONWARNING);
+    if(!digit_request("GET","/admin/dashboard",NULL,response,sizeof(response),10000,&error,&status)){
+        if(status==403)MessageBoxA(main_window,"Digit Core denied SA dashboard access.",APP_TITLE,MB_OK|MB_ICONWARNING);
+        else if(status==401)MessageBoxA(main_window,"Session expired. Log in again.",APP_TITLE,MB_OK|MB_ICONWARNING);
+        else {
+            snprintf(dialog,sizeof(dialog),"Dashboard unavailable (HTTP %lu, WinHTTP %lu).",(unsigned long)status,(unsigned long)error);
+            MessageBoxA(main_window,dialog,APP_TITLE,MB_OK|MB_ICONWARNING);
+        }
+        return;
+    }
+    if(!strstr(response,"\"authorized\":true")||!strstr(response,"\"scope\":\"digit-operations-read\"")||
+       sscanf(strstr(response,"\"channels\":")?strstr(response,"\"channels\":"):"", "\"channels\":%lu",&channels)!=1 ||
+       sscanf(strstr(response,"\"alerts\":")?strstr(response,"\"alerts\":"):"", "\"alerts\":%lu",&alerts)!=1 ||
+       sscanf(strstr(response,"\"unacknowledged_alerts\":")?strstr(response,"\"unacknowledged_alerts\":"):"", "\"unacknowledged_alerts\":%lu",&unacknowledged)!=1){
+        MessageBoxA(main_window,"Invalid dashboard response.",APP_TITLE,MB_OK|MB_ICONWARNING);return;
+    }
+    snprintf(dialog,sizeof(dialog),"Digit SA Operational Dashboard (read-only)\\n\\nChannels: %lu\\nAlerts: %lu\\nUnacknowledged alerts: %lu",channels,alerts,unacknowledged);
+    MessageBoxA(main_window,dialog,APP_TITLE,MB_OK|MB_ICONINFORMATION);
 }
 static void check_health(void){char response[1024];DWORD e,s;if(digit_request("GET","/health",NULL,response,sizeof(response),10000,&e,&s)&&strstr(response,"READY"))SetWindowTextA(status_text,"Connected");else SetWindowTextA(status_text,"Offline");}
 static void load_channels(void){char response[BUFFER_MAX],name[128],id[64];DWORD e,s;const char *p;size_t count=0;SendMessageA(channel_list,LB_RESETCONTENT,0,0);if(!digit_request("GET","/channels",NULL,response,sizeof(response),10000,&e,&s))return;p=response;while(count<CHANNEL_MAX&&(p=strstr(p,"\"id\":\""))!=NULL){if(!json_string_after(p,"id",id,sizeof(id))||!json_string_after(p,"name",name,sizeof(name)))break;strcpy_s(channels[count].id,sizeof(channels[count].id),id);strcpy_s(channels[count].name,sizeof(channels[count].name),name);SendMessageA(channel_list,LB_ADDSTRING,0,(LPARAM)name);if(strcmp(id,active_channel)==0)SendMessageA(channel_list,LB_SETCURSEL,(WPARAM)count,0);++count;p+=6;}channel_count=count;if(SendMessageA(channel_list,LB_GETCURSEL,0,0)==LB_ERR&&count){SendMessageA(channel_list,LB_SETCURSEL,0,0);strcpy_s(active_channel,sizeof(active_channel),channels[0].id);}}
