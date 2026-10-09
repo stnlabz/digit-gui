@@ -237,6 +237,32 @@ static void channel_navigation(const char *json){
   strcpy_s(channels[count].project,sizeof(channels[count].project),project);
   ++count;p=end+1;
  }
+ /* [AI:GPT-6 | 2026-10-09] An old unscoped Alerts channel can
+  * coexist with the server-bound STN-LABZ Alerts projection. Display only
+  * the bound channel when it exists; never misclassify the orphan by name.
+  * This is display filtering only: no channel or ACL is modified. */
+ {
+  int bound_alerts=0;
+  size_t read_index,write_index=0;
+  for(i=0;i<count;i++)
+   if(!strcmp(channels[i].organization,"stn-labz")&&
+      !strcmp(channels[i].project,"operations")&&
+      (!strcmp(channels[i].name,"Alerts")||
+       !strncmp(channels[i].name,"alerts-",7)))bound_alerts=1;
+  for(read_index=0;read_index<count;read_index++){
+   int legacy_alert=!channels[read_index].organization[0]&&
+      (!strcmp(channels[read_index].name,"Alerts")||
+       !strcmp(channels[read_index].name,"alerts")||
+       !strncmp(channels[read_index].name,"alerts-",7));
+   if(bound_alerts&&legacy_alert){
+    if(!strcmp(active_channel,channels[read_index].id))active_channel[0]=0;
+    continue;
+   }
+   if(write_index!=read_index)channels[write_index]=channels[read_index];
+   ++write_index;
+  }
+  count=write_index;
+ }
  channel_count=count;
  /* Project group headers are displayed only for authoritative channel owners.
   * Unbound legacy channels remain visible in a separate neutral section. */
