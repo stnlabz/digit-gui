@@ -539,7 +539,33 @@ static int chat_sa_command(const char *text){
 static void send_question(void){digit_request_job_t *job;HANDLE thread;char question[4096];GetWindowTextA(input_box,question,sizeof(question));if(!question[0])return;if(strncmp(question,"/ack ",5)==0){if(chat_acknowledge(question))return;}if(strncmp(question,"/sa ",4)==0){if(chat_sa_command(question))return;}if(!active_channel[0])return;
 job=(digit_request_job_t *)calloc(1,sizeof(*job));if(!job){append_output("Digit GUI","Unable to allocate request.");return;}strcpy_s(job->question,sizeof(job->question),question);strcpy_s(job->channel_id,sizeof(job->channel_id),active_channel);append_output("You",question);SetWindowTextA(input_box,"");SetWindowTextA(status_text,"Waiting for Digit...");EnableWindow(send_button,FALSE);thread=CreateThread(NULL,0,ask_worker,job,0,NULL);if(!thread){free(job);EnableWindow(send_button,TRUE);append_output("Digit GUI","Unable to start request thread.");return;}CloseHandle(thread);}
 static void create_channel(void){char name[128],response[2048];DWORD e,s;if(DialogBoxParamA(NULL,NULL,main_window,NULL,0))return;(void)name;(void)response;(void)e;(void)s;}
-static void prompt_new_channel(void){char name[128]="";if(GetWindowTextA(input_box,name,sizeof(name))<=0){MessageBoxA(main_window,"Type the new channel name in the input box, then click New Channel.",APP_TITLE,MB_OK|MB_ICONINFORMATION);return;}if(name[0]){char response[2048];DWORD e,s;if(digit_request("POST","/channels",name,response,sizeof(response),10000,&e,&s)){SetWindowTextA(input_box,"");load_channels();MessageBoxA(main_window,"Channel created. Channel visibility requires a separately authorized ACL assignment.",APP_TITLE,MB_OK|MB_ICONINFORMATION);}else {char msg[180];snprintf(msg,sizeof(msg),"Channel creation failed: HTTP %lu, WinHTTP %lu.",(unsigned long)s,(unsigned long)e);MessageBoxA(main_window,msg,APP_TITLE,MB_OK|MB_ICONERROR);}}}
+/* [AI:GPT-6 | 2026-10-09] Raw Core channel creation does not
+ * establish a project binding or ACL. Never present it as visible. */
+static void prompt_new_channel(void){
+ char name[128]="",response[2048]={0},message[384];
+ DWORD error=0,status=0;
+ if(!session_authenticated)return;
+ if(GetWindowTextA(input_box,name,sizeof(name))<=0){
+  MessageBoxA(main_window,"Enter a channel name. For organization/project setup use Setup Channels.",APP_TITLE,MB_OK|MB_ICONINFORMATION);return;
+ }
+ if(strchr(name,'/')){
+  MessageBoxA(main_window,
+   "organization/project is not a channel name.\n\nFor example, stn-labz/ops belongs in Setup Channels.\nNew Channel alone does not establish project membership or access.",
+   APP_TITLE,MB_OK|MB_ICONINFORMATION);return;
+ }
+ if(digit_request("POST","/channels",name,response,sizeof(response),10000,&error,&status)&&
+    strstr(response,"\"created\":true")){
+  SetWindowTextA(input_box,"");
+  load_channels();
+  MessageBoxA(main_window,
+   "Channel created in Digit Core.\n\nIt will NOT appear in the sidebar until its project ownership and your channel access are established. Use the authorized project setup workflow; refreshing alone does not grant access.",
+   APP_TITLE,MB_OK|MB_ICONINFORMATION);
+ }else{
+  snprintf(message,sizeof(message),"Channel not created: HTTP %lu / WinHTTP %lu.",
+           (unsigned long)status,(unsigned long)error);
+  MessageBoxA(main_window,message,APP_TITLE,MB_OK|MB_ICONWARNING);
+ }
+}
 /* [AI:GPT-6 | 2026-10-09] GUI 1.6.8: SA provisioning.
  * User enters organization/project; the server authenticates identity
  * and verifies organization-specific SA assignment. */
@@ -571,7 +597,7 @@ static void setup_project_security(void){
        strstr(reply,"\"ready\":true")!=NULL){
         SetWindowTextA(input_box,"");
         refresh_all();
-        MessageBoxA(main_window,"Security and Alerts ready.",APP_TITLE,MB_OK|MB_ICONINFORMATION);
+        MessageBoxA(main_window,!strcmp(scope,"stn-labz")?"STN-LABZ project channels configured.":"Project security configured. Alerts remain STN-LABZ-specific.",APP_TITLE,MB_OK|MB_ICONINFORMATION);
     }else{
         snprintf(message,sizeof(message),"Security setup incomplete: HTTP %lu / WinHTTP %lu.\n%.180s",
                  (unsigned long)status,(unsigned long)error,reply[0]?reply:"No response body");
