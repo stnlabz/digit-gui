@@ -32,6 +32,7 @@
 #define ID_SA_ASSIGN 1021
 #define ID_SA_REVOKE 1022
 #define ID_SA_ROSTER 1023
+#define ID_PROJECT_MEMBERS 1024
 #define BUFFER_MAX 65536
 #define CHANNEL_MAX 128
 #define ALERT_MAX 256
@@ -652,6 +653,44 @@ static void sa_panel_request(const char *command){
  snprintf(line,sizeof(line),"%s: %u SA administrator record(s) returned by server.",org,total);
  SetWindowTextA(users_feedback,line);
 }
+/* [AI:GPT-6 | 2026-10-09] Verified restricted project roster;
+ * no account or organization membership is inferred from this view. */
+static void project_members_open(void){
+ char body[160],reply[16384]={0},report[8192],user[64],title[160];
+ const char *cursor;size_t used=0,count=0;
+ DWORD error=0,status=0;
+ if(!session_authenticated||!selected_org[0]||!selected_project[0]){
+  MessageBoxA(main_window,"Select a project under an organization first.",
+    APP_TITLE,MB_OK|MB_ICONINFORMATION);return;
+ }
+ snprintf(body,sizeof(body),"%s\t%s",selected_org,selected_project);
+ if(!digit_request("POST","/admin/project-members",body,reply,
+      sizeof(reply),10000,&error,&status)){
+  char diagnostic[350];
+  snprintf(diagnostic,sizeof(diagnostic),
+   "Project member directory unavailable (HTTP %lu, network %lu).\n%.180s",
+    (unsigned long)status,(unsigned long)error,reply);
+  MessageBoxA(main_window,diagnostic,APP_TITLE,MB_OK|MB_ICONWARNING);return;
+ }
+ if(!strstr(reply,"\"members\":[")){
+  MessageBoxA(main_window,"Invalid project member directory response.",
+    APP_TITLE,MB_OK|MB_ICONWARNING);return;
+ }
+ used=(size_t)snprintf(report,sizeof(report),
+  "Verified restricted project members\nOrganization: %s\nProject: %s\n\n",
+  selected_org,selected_project);
+ cursor=strstr(reply,"\"members\":[")+11;
+ while((cursor=strstr(cursor,"\"user\":\""))!=NULL){
+  int n;const char *end=strchr(cursor,'}');
+  if(!end||!json_string_after(cursor,"user",user,sizeof(user)))break;
+  n=snprintf(report+used,sizeof(report)-used,"%s\n",user);
+  if(n<0||(size_t)n>=sizeof(report)-used)break;
+  used+=(size_t)n;count++;cursor=end+1;
+ }
+ if(!count)strcat_s(report,sizeof(report),"No restricted project members returned.");
+ snprintf(title,sizeof(title),"Project members - %s / %s",selected_org,selected_project);
+ MessageBoxA(users_window?users_window:main_window,report,title,MB_OK|MB_ICONINFORMATION);
+}
 static LRESULT CALLBACK sa_panel_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp){
  switch(message){
  case WM_COMMAND:
@@ -665,6 +704,7 @@ static LRESULT CALLBACK sa_panel_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp
   }
   switch(LOWORD(wp)){
    case ID_SA_LOAD:sa_panel_request("list");return 0;
+   case ID_PROJECT_MEMBERS:project_members_open();return 0;
    case ID_SA_ASSIGN:sa_panel_request("assign");return 0;
    case ID_SA_REVOKE:sa_panel_request("revoke");return 0;
   }break;
@@ -685,7 +725,7 @@ static LRESULT CALLBACK sa_panel_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp
 }
 static void sa_panel_open(void){
  static int registered=0;
- WNDCLASSA wc={0};HWND label,target_label,load,assign,revoke;
+ WNDCLASSA wc={0};HWND label,target_label,load,assign,revoke,members;
  HWND controls[8];size_t i;
  if(!session_authenticated)return;
  if(users_window){ShowWindow(users_window,SW_RESTORE);SetForegroundWindow(users_window);return;}
@@ -707,6 +747,8 @@ static void sa_panel_open(void){
   users_window,NULL,NULL,NULL);
  load=CreateWindowA("BUTTON","Load SA Roster",WS_CHILD|WS_VISIBLE|WS_TABSTOP,
   342,12,118,26,users_window,(HMENU)ID_SA_LOAD,NULL,NULL);
+ members=CreateWindowA("BUTTON","Project Members",WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+  470,12,126,26,users_window,(HMENU)ID_PROJECT_MEMBERS,NULL,NULL);
  users_roster=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",
   WS_CHILD|WS_VISIBLE|WS_VSCROLL|WS_TABSTOP,16,52,580,222,
   users_window,(HMENU)ID_SA_ROSTER,NULL,NULL);
@@ -725,6 +767,7 @@ static void sa_panel_open(void){
  controls[4]=target_label;controls[5]=users_target_edit;controls[6]=assign;controls[7]=revoke;
  for(i=0;i<8;i++)SendMessageA(controls[i],WM_SETFONT,(WPARAM)ui_font,TRUE);
  SendMessageA(users_feedback,WM_SETFONT,(WPARAM)ui_font,TRUE);
+ SendMessageA(members,WM_SETFONT,(WPARAM)ui_font,TRUE);
  ShowWindow(users_window,SW_SHOW);
  if(sa_panel_identifier(selected_org))sa_panel_request("list");
 }
