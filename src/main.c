@@ -181,7 +181,7 @@ static void do_logout(void){
     clear_session();set_access_controls(FALSE);EnableWindow(login_button,TRUE);
     if(users_window)DestroyWindow(users_window);
     SendMessageA(channel_list,LB_RESETCONTENT,0,0);SendMessageA(alerts_list,LB_RESETCONTENT,0,0);
-    active_channel[0]=0;channel_count=0;alert_count=0;
+    active_channel[0]=0;selected_org[0]=0;selected_project[0]=0;channel_count=0;alert_count=0;
     SetWindowTextW(output_box,L"");SetWindowTextA(status_text,"Signed out");
 }
 /* [AI:GPT-6 | 2026-10-08] Interface 1.6.9 read-only SA dashboard.
@@ -571,6 +571,13 @@ static int chat_sa_command(const char *text){
   snprintf(prompt,sizeof(prompt),"Revoke Security Administrator assignment for %s in %s?",user,org);
   if(MessageBoxA(users_window,prompt,"Confirm SA revocation",MB_YESNO|MB_ICONWARNING)!=IDYES)return;
  }
+ if(!strcmp(command,"revoke")){
+  char confirmation[220];
+  snprintf(confirmation,sizeof(confirmation),
+    "Revoke Security Administrator access for %s in %s?",user,org);
+  if(MessageBoxA(users_window,confirmation,"Confirm SA revocation",
+        MB_YESNO|MB_DEFBUTTON2|MB_ICONWARNING)!=IDYES)return;
+ }
  snprintf(body,sizeof(body),"%s\t%s\t%s",command,org,user);
     if(digit_request("POST","/admin/sa",body,reply,sizeof(reply),10000,&error,&status)){
         SetWindowTextA(input_box,"");
@@ -642,7 +649,7 @@ static void sa_panel_request(const char *command){
   SendMessageA(users_roster,LB_ADDSTRING,0,(LPARAM)line);
   ++total;cursor=end+1;if(*cursor==']')break;
  }
- snprintf(line,sizeof(line),"%s: %u SA roster record(s). Server verified.",org,total);
+ snprintf(line,sizeof(line),"%s: %u SA administrator record(s) returned by server.",org,total);
  SetWindowTextA(users_feedback,line);
 }
 static LRESULT CALLBACK sa_panel_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp){
@@ -689,7 +696,7 @@ static void sa_panel_open(void){
   if(!RegisterClassA(&wc))return;registered=1;
  }
  users_window=CreateWindowExA(WS_EX_TOOLWINDOW,"DigitSARosterWindow",
-  "Digit - Organization Security Administration",
+  "Digit - Organization SA Administration",
   WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,
   CW_USEDEFAULT,CW_USEDEFAULT,630,425,main_window,NULL,GetModuleHandleA(NULL),NULL);
  if(!users_window)return;
@@ -698,7 +705,7 @@ static void sa_panel_open(void){
  users_org_edit=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT",selected_org,
   WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,140,12,190,26,
   users_window,NULL,NULL,NULL);
- load=CreateWindowA("BUTTON","Load Users",WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+ load=CreateWindowA("BUTTON","Load SA Roster",WS_CHILD|WS_VISIBLE|WS_TABSTOP,
   342,12,118,26,users_window,(HMENU)ID_SA_LOAD,NULL,NULL);
  users_roster=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",
   WS_CHILD|WS_VISIBLE|WS_VSCROLL|WS_TABSTOP,16,52,580,222,
@@ -712,7 +719,7 @@ static void sa_panel_open(void){
   342,289,115,28,users_window,(HMENU)ID_SA_ASSIGN,NULL,NULL);
  revoke=CreateWindowA("BUTTON","Revoke SA",WS_CHILD|WS_VISIBLE|WS_TABSTOP,
   466,289,130,28,users_window,(HMENU)ID_SA_REVOKE,NULL,NULL);
- users_feedback=CreateWindowA("STATIC","Organization-scoped SA roster; server enforces authorization.",
+ users_feedback=CreateWindowA("STATIC","Shows SA administrators only; this is not the full user directory.",
   WS_CHILD|WS_VISIBLE,16,331,580,38,users_window,NULL,NULL,NULL);
  controls[0]=label;controls[1]=users_org_edit;controls[2]=load;controls[3]=users_roster;
  controls[4]=target_label;controls[5]=users_target_edit;controls[6]=assign;controls[7]=revoke;
