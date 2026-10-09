@@ -60,6 +60,8 @@ static HWND main_window,channel_list,output_box,input_box,send_button,status_tex
 static HWND users_window,users_org_edit,users_target_edit,users_roster,users_feedback;
 static HWND member_window,member_list,member_detail,member_heading;
 static char member_org[64],member_project[64];
+static struct {char user[64];int account_active,sa_authorized;} member_rows[128];
+static size_t member_row_count=0;
 static char digit_host[256]="127.0.0.1";
 static INTERNET_PORT digit_port=8081;
 static channel_item_t channels[CHANNEL_MAX];static size_t channel_count=0;
@@ -679,6 +681,7 @@ static void project_members_refresh(void){
  if(!cursor){SetWindowTextA(member_detail,"Invalid member directory response.");return;}
  cursor=strchr(cursor,'[')+1;
  SendMessageA(member_list,LB_RESETCONTENT,0,0);
+ member_row_count=0;
  while((cursor=strstr(cursor,"\"user\":\""))!=NULL){
   char record[512];size_t n;
   end=strchr(cursor,'}');if(!end)break;
@@ -687,9 +690,15 @@ static void project_members_refresh(void){
   if(!json_string_after(record,"user",user,sizeof(user))||
      !json_string_after(record,"membership",membership,sizeof(membership)))break;
   if(strcmp(membership,"restricted"))break;
-  snprintf(line,sizeof(line),"%-30.30s   Restricted project member",user);
+  if(member_row_count>=128)break;
+  strcpy_s(member_rows[member_row_count].user,sizeof(member_rows[member_row_count].user),user);
+  member_rows[member_row_count].account_active=strstr(record,"\"account_verified_active\":true")!=NULL;
+  member_rows[member_row_count].sa_authorized=strstr(record,"\"sa_authorized\":true")!=NULL;
+  snprintf(line,sizeof(line),"%-18.18s  %-12s  %-12s  %s",user,
+    member_rows[member_row_count].account_active?"Active":"Unverified",
+    "Restricted",member_rows[member_row_count].sa_authorized?"SA":"No SA");
   SendMessageA(member_list,LB_ADDSTRING,0,(LPARAM)line);
-  count++;cursor=end+1;
+  member_row_count++;count++;cursor=end+1;
  }
  snprintf(line,sizeof(line),"%u verified restricted project member(s). Select a row for details.",count);
  SetWindowTextA(member_detail,line);
@@ -699,13 +708,14 @@ static LRESULT CALLBACK project_members_proc(HWND hwnd,UINT message,WPARAM wp,LP
  case WM_COMMAND:
   if(LOWORD(wp)==ID_MEMBER_REFRESH){project_members_refresh();return 0;}
   if(LOWORD(wp)==ID_MEMBER_LIST&&HIWORD(wp)==LBN_SELCHANGE){
-   char row[256],user[64],detail[320];LRESULT index;
+   char detail[420];LRESULT index;
    index=SendMessageA(member_list,LB_GETCURSEL,0,0);
-   if(index!=LB_ERR&&SendMessageA(member_list,LB_GETTEXT,(WPARAM)index,(LPARAM)row)!=LB_ERR&&
-      sscanf_s(row,"%63s",user,(unsigned)sizeof(user))==1){
+   if(index!=LB_ERR&&(size_t)index<member_row_count){
     snprintf(detail,sizeof(detail),
-      "Identity: %s\r\nOrganization: %s\r\nProject: %s\r\nMembership: restricted",
-      user,member_org,member_project);
+      "Identity: %s\r\nOrganization: %s    Project: %s\r\nProject membership: Restricted\r\nAccount: %s    SA authority: %s",
+      member_rows[index].user,member_org,member_project,
+      member_rows[index].account_active?"Verified active":"Not verified active",
+      member_rows[index].sa_authorized?"Verified":"Not authorized");
     SetWindowTextA(member_detail,detail);
    }
    return 0;
@@ -713,7 +723,7 @@ static LRESULT CALLBACK project_members_proc(HWND hwnd,UINT message,WPARAM wp,LP
   break;
  case WM_CLOSE:DestroyWindow(hwnd);return 0;
  case WM_DESTROY:
-  member_window=NULL;member_list=NULL;member_detail=NULL;member_heading=NULL;return 0;
+  member_window=NULL;member_list=NULL;member_detail=NULL;member_heading=NULL;member_row_count=0;return 0;
  case WM_CTLCOLORSTATIC:
  case WM_CTLCOLORLISTBOX:{
   HDC dc=(HDC)wp;
@@ -748,7 +758,7 @@ static void project_members_open(void){
   CW_USEDEFAULT,CW_USEDEFAULT,660,475,
   main_window,NULL,GetModuleHandleA(NULL),NULL);
  if(!member_window)return;
- member_heading=CreateWindowA("STATIC","Identity                               Membership",
+ member_heading=CreateWindowA("STATIC","Identity                 Account          Membership       SA",
   WS_CHILD|WS_VISIBLE,16,18,440,24,member_window,NULL,NULL,NULL);
  refresh=CreateWindowA("BUTTON","Refresh",WS_CHILD|WS_VISIBLE|WS_TABSTOP,
   514,12,112,30,member_window,(HMENU)ID_MEMBER_REFRESH,NULL,NULL);
