@@ -218,6 +218,19 @@ static void channel_navigation(const char *json){
   scope[0]=project[0]=0;
   json_string_after(record,"organization",scope,sizeof(scope));
   json_string_after(record,"project",project,sizeof(project));
+  /* [AI:GPT-6 | 2026-10-09] Legacy unscoped Alerts is a
+   * STN-LABZ-only presentation. Never associate it with Team ChAoS.
+   * Scope authority remains entirely server-side. */
+  if(!scope[0]&&(!strcmp(name,"Alerts")||
+      !strcmp(name,"alerts-stn-labz-operations"))){
+   const char *orgs=strstr(json,"\"organizations\":[");
+   const char *end=orgs?strchr(orgs,']'):NULL;
+   const char *stn=orgs?strstr(orgs,"\"stn-labz\""):NULL;
+   if(stn&&end&&stn<end){
+    strcpy_s(scope,sizeof(scope),"stn-labz");
+    strcpy_s(project,sizeof(project),"operations");
+   }
+  }
   strcpy_s(channels[count].id,sizeof(channels[count].id),id);
   strcpy_s(channels[count].name,sizeof(channels[count].name),name);
   strcpy_s(channels[count].organization,sizeof(channels[count].organization),scope);
