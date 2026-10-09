@@ -1,4 +1,6 @@
-# Digit GUI
+# Digit GUI 1.5.4
+
+Version 1.5.4 targets Digit Interface 1.5.4. GUI integration and runtime qualification are ongoing.
 
 Small native Windows client for interacting with Digit.
 
