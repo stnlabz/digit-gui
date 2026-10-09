@@ -2,7 +2,7 @@
 
 Digit Desktop is a small, native Win32 C client for **Digit-native, IRC-like communications**. It is **not an IRC client or IRC protocol implementation**. Digit drives the communications service; the Windows GUI is a client of the authenticated Interface API.
 
-**Current source lineage:** the running GUI still identifies as **1.6.10**. The operator reported a Windows **BUILD GREEN** and supplied live screenshots on 2026-10-09. Interface **1.6.11** subsequently reported **46 scope-parser tests passed** and **39 historical regression suites passed**, with zero failures. Those test results do not by themselves prove a 1.6.11 module hotload.
+**Current source lineage:** the running GUI still identifies as **1.6.11**. The operator reported a Windows **BUILD GREEN** and supplied live screenshots on 2026-10-09. Interface **1.6.11** subsequently reported **46 scope-parser tests passed** and **39 historical regression suites passed**, with zero failures. Those test results do not by themselves prove a 1.6.11 module hotload.
 
 **Principles:** Small. Deterministic. Easy to use. Clear distinction between account, project membership, SA authority and channel participation.
 
@@ -33,6 +33,7 @@ Use the actual authorized endpoint and certificate configuration for your deploy
 - **Organizations and projects** appear as separate, server-authorized navigation scopes (observed STN-LABZ and Team ChAoS).
 - **Channels** use `#` visual prefixes, such as `#General`, `#Security` and `#Alerts`. The prefix is display-only; stored channel names, IDs and permissions do not change.
 - **Conversation** in the center shows retained channel messages and submits requests to Digit from the selected authorized channel.
+- **Digit — Private Chat** is a separate, authenticated one-on-one view using `POST /ask`. The current GUI view is transient: there is no private-history retrieval or retained personal memory yet. No human-to-human DMs exist. Switching away clears the private display; private responses are not appended to shared channels.
 - **Users** at right currently shows an SA-authorized *restricted project-member directory projection*, **not** authenticated online/channel presence. An `[SA]` marker denotes independently verified organization SA authority, not live presence.
 - **Digit [AI]** appears in the Users panel for `#General` as an agent participant. **Digit can be invoked from any authorized channel** using the existing request path. Inclusion in the list does not grant additional authority.
 - **Administration** provides organization-scoped SA roster controls, project listing, scoped channel management and a Project Members window. Member details independently show restricted membership, account-active verification and SA verification.
@@ -47,6 +48,7 @@ Observed GUI behavior: `#General` greetings receive replies; several broader ide
 - `POST /admin/channels`: scoped channel creation, subject to SA and project policy.
 - `GET /channels/{id}/messages`: retained channel history.
 - `POST /channels/{id}/ask`: channel-selected request to Digit.
+- `POST /ask`: authenticated Digit-only private request. No private-history persistence is claimed.
 - `GET /admin/dashboard`: authorized aggregate dashboard.
 - `POST /admin/sa`: organization SA roster and authorized changes.
 - `POST /admin/project-members`: restricted member directory with separately verified account-active and SA status.
