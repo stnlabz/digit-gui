@@ -725,6 +725,7 @@ static LRESULT CALLBACK project_members_proc(HWND hwnd,UINT message,WPARAM wp,LP
  case WM_DESTROY:
   member_window=NULL;member_list=NULL;member_detail=NULL;member_heading=NULL;member_row_count=0;return 0;
  case WM_CTLCOLORSTATIC:
+ case WM_CTLCOLOREDIT:
  case WM_CTLCOLORLISTBOX:{
   HDC dc=(HDC)wp;
   SetTextColor(dc,DIGIT_TEXT);SetBkColor(dc,
@@ -755,7 +756,7 @@ static void project_members_open(void){
  snprintf(title,sizeof(title),"Digit - Project Members: %s / %s",member_org,member_project);
  member_window=CreateWindowExA(WS_EX_TOOLWINDOW,"DigitProjectMembersWindow",title,
   WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,
-  CW_USEDEFAULT,CW_USEDEFAULT,660,475,
+  CW_USEDEFAULT,CW_USEDEFAULT,660,565,
   main_window,NULL,GetModuleHandleA(NULL),NULL);
  if(!member_window)return;
  member_heading=CreateWindowA("STATIC","Identity                 Account          Membership       SA",
@@ -765,8 +766,9 @@ static void project_members_open(void){
  member_list=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",
   WS_CHILD|WS_VISIBLE|WS_VSCROLL|LBS_NOTIFY|WS_TABSTOP,
   16,52,610,275,member_window,(HMENU)ID_MEMBER_LIST,NULL,NULL);
- member_detail=CreateWindowA("STATIC","Retrieving verified membership...",
-  WS_CHILD|WS_VISIBLE,16,342,610,75,member_window,NULL,NULL,NULL);
+ member_detail=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","Retrieving verified membership...",
+  WS_CHILD|WS_VISIBLE|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
+  16,342,610,160,member_window,NULL,NULL,NULL);
  SendMessageA(member_heading,WM_SETFONT,(WPARAM)font,TRUE);
  SendMessageA(refresh,WM_SETFONT,(WPARAM)font,TRUE);
  SendMessageA(member_list,WM_SETFONT,(WPARAM)font,TRUE);
