@@ -31,6 +31,7 @@
 #define ID_SA_LOAD 1020
 #define ID_SA_ASSIGN 1021
 #define ID_SA_REVOKE 1022
+#define ID_SA_ROSTER 1023
 #define BUFFER_MAX 65536
 #define CHANNEL_MAX 128
 #define ALERT_MAX 256
@@ -546,7 +547,12 @@ static int chat_sa_command(const char *text){
             }
         }}
     }
-    snprintf(body,sizeof(body),"%s\t%s\t%s",command,org,user);
+    if(!strcmp(command,"revoke")){
+  char prompt[200];
+  snprintf(prompt,sizeof(prompt),"Revoke Security Administrator assignment for %s in %s?",user,org);
+  if(MessageBoxA(users_window,prompt,"Confirm SA revocation",MB_YESNO|MB_ICONWARNING)!=IDYES)return;
+ }
+ snprintf(body,sizeof(body),"%s\t%s\t%s",command,org,user);
     if(digit_request("POST","/admin/sa",body,reply,sizeof(reply),10000,&error,&status)){
         SetWindowTextA(input_box,"");
         sa_pretty(command,org,user,reply);
@@ -623,6 +629,14 @@ static void sa_panel_request(const char *command){
 static LRESULT CALLBACK sa_panel_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp){
  switch(message){
  case WM_COMMAND:
+  if(LOWORD(wp)==ID_SA_ROSTER && HIWORD(wp)==LBN_SELCHANGE){
+   LRESULT sel=SendMessageA(users_roster,LB_GETCURSEL,0,0);
+   char row[320],user[64];
+   if(sel!=LB_ERR && SendMessageA(users_roster,LB_GETTEXT,(WPARAM)sel,(LPARAM)row)!=LB_ERR &&
+      sscanf_s(row,"%63s",user,(unsigned)sizeof(user))==1)
+    SetWindowTextA(users_target_edit,user);
+   return 0;
+  }
   switch(LOWORD(wp)){
    case ID_SA_LOAD:sa_panel_request("list");return 0;
    case ID_SA_ASSIGN:sa_panel_request("assign");return 0;
@@ -669,7 +683,7 @@ static void sa_panel_open(void){
   342,12,118,26,users_window,(HMENU)ID_SA_LOAD,NULL,NULL);
  users_roster=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",
   WS_CHILD|WS_VISIBLE|WS_VSCROLL|WS_TABSTOP,16,52,580,222,
-  users_window,NULL,NULL,NULL);
+  users_window,(HMENU)ID_SA_ROSTER,NULL,NULL);
  target_label=CreateWindowA("STATIC","User identifier",WS_CHILD|WS_VISIBLE,
   16,294,120,23,users_window,NULL,NULL,NULL);
  users_target_edit=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",
