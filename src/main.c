@@ -171,7 +171,37 @@ alerts[count].acknowledged=(ack && (!next || ack<next))?1:0;
 snprintf(display,sizeof(display),"[%s]%s %s",severity,alerts[count].acknowledged?" [ACK]":"",summary);SendMessageA(alerts_list,LB_ADDSTRING,0,(LPARAM)display);++count;p+=6;}alert_count=count;/* [AI:GPT-6 | 2026-10-09] Alert retrieval does not override connection status. */}
 static void refresh_all(void){if(!session_authenticated)return;check_health();load_channels();load_history();}
 static DWORD WINAPI ask_worker(LPVOID parameter){digit_request_job_t *job=(digit_request_job_t *)parameter;digit_result_t *result=(digit_result_t *)calloc(1,sizeof(*result));char response[BUFFER_MAX],path[256];if(!result){free(job);return 1;}strcpy_s(result->channel_id,sizeof(result->channel_id),job->channel_id);snprintf(path,sizeof(path),"/channels/%s/ask",job->channel_id);result->ok=digit_request("POST",path,job->question,response,sizeof(response),ASK_RECEIVE_TIMEOUT_MS,&result->error,&result->http_status);if(result->ok&&!extract_answer(response,result->answer,sizeof(result->answer))){result->ok=0;result->error=ERROR_INVALID_DATA;}free(job);PostMessageA(main_window,WM_DIGIT_RESULT,0,(LPARAM)result);return 0;}
-static void send_question(void){digit_request_job_t *job;HANDLE thread;char question[4096];GetWindowTextA(input_box,question,sizeof(question));if(!question[0]||!active_channel[0])return;job=(digit_request_job_t *)calloc(1,sizeof(*job));if(!job){append_output("Digit GUI","Unable to allocate request.");return;}strcpy_s(job->question,sizeof(job->question),question);strcpy_s(job->channel_id,sizeof(job->channel_id),active_channel);append_output("You",question);SetWindowTextA(input_box,"");SetWindowTextA(status_text,"Waiting for Digit...");EnableWindow(send_button,FALSE);thread=CreateThread(NULL,0,ask_worker,job,0,NULL);if(!thread){free(job);EnableWindow(send_button,TRUE);append_output("Digit GUI","Unable to start request thread.");return;}CloseHandle(thread);}
+/* [AI:GPT-6 | 2026-10-09] Alert acknowledgement from the existing chat
+ * input, with an exact Core-issued ID and server-side validation. */
+static int chat_acknowledge(const char *question){
+    const char *id=question+5;
+    char path[256],reply[1024]={0},diagnostic[256];
+    DWORD error=0,status=0;
+    size_t i,n;
+    if(strncmp(question,"/ack ",5)!=0)return 0;
+    n=strlen(id);
+    if(!n||n>=128){append_output("Digit GUI","Usage: /ack <alert-id>");return 1;}
+    for(i=0;i<n;++i){
+        char c=id[i];
+        if(!((c>='a'&&c<='z')||(c>='A'&&c<='Z')||
+             (c>='0'&&c<='9')||c=='-'||c=='_')){
+            append_output("Digit GUI","Invalid alert ID.");return 1;
+        }
+    }
+    snprintf(path,sizeof(path),"/alerts/%s/acknowledge",id);
+    if(digit_request("POST",path,"",reply,sizeof(reply),10000,&error,&status)&&
+       strstr(reply,"\"acknowledged\":true")){
+        SetWindowTextA(input_box,"");
+        load_history();
+    }else{
+        snprintf(diagnostic,sizeof(diagnostic),"Acknowledgement failed: HTTP %lu / WinHTTP %lu.",
+                 (unsigned long)status,(unsigned long)error);
+        append_output("Digit GUI",diagnostic);
+    }
+    return 1;
+}
+static void send_question(void){digit_request_job_t *job;HANDLE thread;char question[4096];GetWindowTextA(input_box,question,sizeof(question));if(!question[0]||!active_channel[0])return;if(strncmp(question,"/ack ",5)==0){if(chat_acknowledge(question))return;}
+job=(digit_request_job_t *)calloc(1,sizeof(*job));if(!job){append_output("Digit GUI","Unable to allocate request.");return;}strcpy_s(job->question,sizeof(job->question),question);strcpy_s(job->channel_id,sizeof(job->channel_id),active_channel);append_output("You",question);SetWindowTextA(input_box,"");SetWindowTextA(status_text,"Waiting for Digit...");EnableWindow(send_button,FALSE);thread=CreateThread(NULL,0,ask_worker,job,0,NULL);if(!thread){free(job);EnableWindow(send_button,TRUE);append_output("Digit GUI","Unable to start request thread.");return;}CloseHandle(thread);}
 static void create_channel(void){char name[128],response[2048];DWORD e,s;if(DialogBoxParamA(NULL,NULL,main_window,NULL,0))return;(void)name;(void)response;(void)e;(void)s;}
 static void prompt_new_channel(void){char name[128]="";if(GetWindowTextA(input_box,name,sizeof(name))<=0){MessageBoxA(main_window,"Type the new channel name in the input box, then click New Channel.",APP_TITLE,MB_OK|MB_ICONINFORMATION);return;}if(name[0]){char response[2048];DWORD e,s;if(digit_request("POST","/channels",name,response,sizeof(response),10000,&e,&s)){SetWindowTextA(input_box,"");load_channels();MessageBoxA(main_window,"Channel created. Channel visibility requires a separately authorized ACL assignment.",APP_TITLE,MB_OK|MB_ICONINFORMATION);}else {char msg[180];snprintf(msg,sizeof(msg),"Channel creation failed: HTTP %lu, WinHTTP %lu.",(unsigned long)s,(unsigned long)e);MessageBoxA(main_window,msg,APP_TITLE,MB_OK|MB_ICONERROR);}}}
 /* [AI:GPT-6 | 2026-10-09] GUI 1.6.3: SA provisioning.
