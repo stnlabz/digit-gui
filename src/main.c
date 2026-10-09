@@ -282,7 +282,7 @@ static void channel_navigation(const char *json){
     if(!strcmp(channels[k].organization,org)&&!strcmp(channels[k].project,proj))break;
    if(k!=j)continue;
    if(proj[0]){
-    snprintf(display,sizeof(display),"   %s",proj);
+    snprintf(display,sizeof(display),"   %s",!strcmp(proj,"operations")?"Operations":proj);
     {LRESULT row=SendMessageA(channel_list,LB_ADDSTRING,0,(LPARAM)display);
      SendMessageA(channel_list,LB_SETITEMDATA,(WPARAM)row,(LPARAM)-1);}
    }
