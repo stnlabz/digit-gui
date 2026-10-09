@@ -81,7 +81,26 @@ EnableWindow(channel_list,enabled);EnableWindow(output_box,enabled);EnableWindow
 static void trim_line(char *text){size_t n;if(!text)return;n=strlen(text);while(n>0&&(text[n-1]=='\r'||text[n-1]=='\n'||text[n-1]==' '||text[n-1]=='\t'))text[--n]=0;}
 static int config_path(char *path,size_t path_size){DWORD n=GetModuleFileNameA(NULL,path,(DWORD)path_size);char *slash;if(n==0||n>=path_size)return 0;slash=strrchr(path,'\\');if(!slash)return 0;slash[1]=0;if(strlen(path)+strlen("digit.conf")+1>path_size)return 0;strcat_s(path,path_size,"digit.conf");return 1;}
 static int load_config(void){FILE *stream;char path[MAX_PATH],line[512];int have_host=0,have_port=0;if(!config_path(path,sizeof(path)))return 0;stream=fopen(path,"rb");if(!stream)return 0;while(fgets(line,sizeof(line),stream)){char *value;trim_line(line);if(!line[0]||line[0]=='#')continue;value=strchr(line,'=');if(!value)continue;*value++=0;if(strcmp(line,"host")==0){if(!value[0]||strlen(value)>=sizeof(digit_host)){fclose(stream);return 0;}strcpy_s(digit_host,sizeof(digit_host),value);have_host=1;}else if(strcmp(line,"port")==0){char *end=NULL;unsigned long port=strtoul(value,&end,10);if(!value[0]||!end||*end||port==0||port>65535){fclose(stream);return 0;}digit_port=(INTERNET_PORT)port;have_port=1;}}fclose(stream);return have_host&&have_port;}
-static void append_output(const char *speaker,const char *text){char line[8192];WCHAR wide[8192];int length;snprintf(line,sizeof(line),"%s: %s\r\n\r\n",speaker,text);if(!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,line,-1,wide,(int)(sizeof(wide)/sizeof(wide[0]))))return;length=GetWindowTextLengthW(output_box);SendMessageW(output_box,EM_SETSEL,(WPARAM)length,(LPARAM)length);SendMessageW(output_box,EM_REPLACESEL,FALSE,(LPARAM)wide);}
+/* [AI:GPT-6 | 2026-10-09] Win32 EDIT requires CRLF, not Unix LF. */
+static void append_output(const char *speaker,const char *text){
+    char line[8192];WCHAR wide[8192];size_t n=0,i;int length;
+    const char *parts[2]={speaker,text};
+    for(i=0;i<2;i++){
+        const char *p=parts[i];
+        if(i==0){while(*p&&n+2<sizeof(line))line[n++]=*p++;line[n++]=':';line[n++]=' ';}
+        else while(*p&&n+4<sizeof(line)){
+            if(*p=='\r'){line[n++]='\r';if(p[1]=='\n'){line[n++]='\n';++p;}}
+            else if(*p=='\n'){line[n++]='\r';line[n++]='\n';}
+            else line[n++]=*p;
+            ++p;
+        }
+    }
+    line[n++]='\r';line[n++]='\n';line[n++]='\r';line[n++]='\n';line[n]=0;
+    if(!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,line,-1,wide,(int)(sizeof(wide)/sizeof(wide[0]))))return;
+    length=GetWindowTextLengthW(output_box);
+    SendMessageW(output_box,EM_SETSEL,(WPARAM)length,(LPARAM)length);
+    SendMessageW(output_box,EM_REPLACESEL,FALSE,(LPARAM)wide);
+}
 static int json_string_after(const char *start,const char *key,char *out,size_t n){char pattern[128];const char *p;size_t o=0;snprintf(pattern,sizeof(pattern),"\"%s\":\"",key);p=strstr(start,pattern);if(!p)return 0;p+=strlen(pattern);while(*p&&o+1<n){if(*p=='"')break;if(*p=='\\'&&p[1]){++p;if(*p=='n')out[o++]='\n';else if(*p=='t')out[o++]='\t';else if(*p!='r')out[o++]=*p;++p;continue;}out[o++]=*p++;}out[o]=0;return *p=='"';}
 static int extract_answer(const char *json,char *answer,size_t n){return json_string_after(json,"answer",answer,n);}
 static int digit_request(const char *method,const char *path,const char *body,char *response,size_t response_size,DWORD receive_timeout,DWORD *error_out,DWORD *status_out){WCHAR host_w[256],path_w[512],method_w[16];HINTERNET session=NULL,connection=NULL,request=NULL;DWORD status=0,status_size=sizeof(status),available=0,read=0;size_t used=0;int ok=0;DWORD error=ERROR_SUCCESS;if(error_out)*error_out=0;if(status_out)*status_out=0;if(!MultiByteToWideChar(CP_UTF8,0,digit_host,-1,host_w,256)||!MultiByteToWideChar(CP_UTF8,0,path,-1,path_w,512)||!MultiByteToWideChar(CP_UTF8,0,method,-1,method_w,16)){error=GetLastError();goto done;}session=WinHttpOpen(L"Digit GUI/1.6.7",WINHTTP_ACCESS_TYPE_NO_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);if(!session){error=GetLastError();goto done;}if(!WinHttpSetTimeouts(session,5000,5000,10000,(int)receive_timeout)){error=GetLastError();goto done;}connection=WinHttpConnect(session,host_w,digit_port,0);if(!connection){error=GetLastError();goto done;}request=WinHttpOpenRequest(connection,method_w,path_w,NULL,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE);if(!request){error=GetLastError();goto done;}/* [AI:GPT-6 | 2026-10-08] Attach bearer only for authenticated API calls;
