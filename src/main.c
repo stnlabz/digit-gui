@@ -7,8 +7,8 @@
 
 #pragma comment(lib,"winhttp.lib")
 
-#define DIGIT_GUI_VERSION "1.6.8"
-#define APP_TITLE "Digit GUI 1.6.8"
+#define DIGIT_GUI_VERSION "1.6.9"
+#define APP_TITLE "Digit GUI 1.6.9"
 #define ID_CHANNELS 1001
 #define ID_OUTPUT 1002
 #define ID_INPUT 1003
@@ -56,7 +56,7 @@ static alert_item_t alerts[ALERT_MAX];static size_t alert_count=0;
 /* [AI:GPT-6 | 2026-10-09] No invisible legacy General selection. */
 static char active_channel[64]="";
 static char selected_org[64]="",selected_project[64]="";
-/* [AI:GPT-6 | 2026-10-08] Digit GUI 1.6.8: in-process bearer only.
+/* [AI:GPT-6 | 2026-10-08] Digit GUI 1.6.9: in-process bearer only.
  * No password or session token is written to configuration or disk. */
 static char session_token[129];
 static char session_identity[64];
@@ -104,7 +104,7 @@ static void append_output(const char *speaker,const char *text){
 }
 static int json_string_after(const char *start,const char *key,char *out,size_t n){char pattern[128];const char *p;size_t o=0;snprintf(pattern,sizeof(pattern),"\"%s\":\"",key);p=strstr(start,pattern);if(!p)return 0;p+=strlen(pattern);while(*p&&o+1<n){if(*p=='"')break;if(*p=='\\'&&p[1]){++p;if(*p=='n')out[o++]='\n';else if(*p=='t')out[o++]='\t';else if(*p!='r')out[o++]=*p;++p;continue;}out[o++]=*p++;}out[o]=0;return *p=='"';}
 static int extract_answer(const char *json,char *answer,size_t n){return json_string_after(json,"answer",answer,n);}
-static int digit_request(const char *method,const char *path,const char *body,char *response,size_t response_size,DWORD receive_timeout,DWORD *error_out,DWORD *status_out){WCHAR host_w[256],path_w[512],method_w[16];HINTERNET session=NULL,connection=NULL,request=NULL;DWORD status=0,status_size=sizeof(status),available=0,read=0;size_t used=0;int ok=0;DWORD error=ERROR_SUCCESS;if(error_out)*error_out=0;if(status_out)*status_out=0;if(!MultiByteToWideChar(CP_UTF8,0,digit_host,-1,host_w,256)||!MultiByteToWideChar(CP_UTF8,0,path,-1,path_w,512)||!MultiByteToWideChar(CP_UTF8,0,method,-1,method_w,16)){error=GetLastError();goto done;}session=WinHttpOpen(L"Digit GUI/1.6.8",WINHTTP_ACCESS_TYPE_NO_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);if(!session){error=GetLastError();goto done;}if(!WinHttpSetTimeouts(session,5000,5000,10000,(int)receive_timeout)){error=GetLastError();goto done;}connection=WinHttpConnect(session,host_w,digit_port,0);if(!connection){error=GetLastError();goto done;}request=WinHttpOpenRequest(connection,method_w,path_w,NULL,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE);if(!request){error=GetLastError();goto done;}/* [AI:GPT-6 | 2026-10-08] Attach bearer only for authenticated API calls;
+static int digit_request(const char *method,const char *path,const char *body,char *response,size_t response_size,DWORD receive_timeout,DWORD *error_out,DWORD *status_out){WCHAR host_w[256],path_w[512],method_w[16];HINTERNET session=NULL,connection=NULL,request=NULL;DWORD status=0,status_size=sizeof(status),available=0,read=0;size_t used=0;int ok=0;DWORD error=ERROR_SUCCESS;if(error_out)*error_out=0;if(status_out)*status_out=0;if(!MultiByteToWideChar(CP_UTF8,0,digit_host,-1,host_w,256)||!MultiByteToWideChar(CP_UTF8,0,path,-1,path_w,512)||!MultiByteToWideChar(CP_UTF8,0,method,-1,method_w,16)){error=GetLastError();goto done;}session=WinHttpOpen(L"Digit GUI/1.6.9",WINHTTP_ACCESS_TYPE_NO_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);if(!session){error=GetLastError();goto done;}if(!WinHttpSetTimeouts(session,5000,5000,10000,(int)receive_timeout)){error=GetLastError();goto done;}connection=WinHttpConnect(session,host_w,digit_port,0);if(!connection){error=GetLastError();goto done;}request=WinHttpOpenRequest(connection,method_w,path_w,NULL,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE);if(!request){error=GetLastError();goto done;}/* [AI:GPT-6 | 2026-10-08] Attach bearer only for authenticated API calls;
  * login never transmits a previous token. */
 if(session_authenticated && strcmp(path,"/session/login")!=0){
     WCHAR auth_header[240];
@@ -176,7 +176,7 @@ static void do_logout(void){
     active_channel[0]=0;channel_count=0;alert_count=0;
     SetWindowTextW(output_box,L"");SetWindowTextA(status_text,"Signed out");
 }
-/* [AI:GPT-6 | 2026-10-08] Interface 1.6.8 read-only SA dashboard.
+/* [AI:GPT-6 | 2026-10-08] Interface 1.6.9 read-only SA dashboard.
  * Show server-returned aggregates; never infer authority from the GUI. */
 static void check_sa(void){
     char response[1024],dialog[512];
@@ -579,7 +579,7 @@ static void prompt_new_channel(void){
  }
  SecureZeroMemory(body,sizeof(body));
 }
-/* [AI:GPT-6 | 2026-10-09] GUI 1.6.8: SA provisioning.
+/* [AI:GPT-6 | 2026-10-09] GUI 1.6.9: SA provisioning.
  * User enters organization/project; the server authenticates identity
  * and verifies organization-specific SA assignment. */
 /* [AI:GPT-6 | 2026-10-09] One-action operator workflow.
@@ -660,7 +660,7 @@ static void prompt_bind_security(void){
         MessageBoxA(main_window,message,APP_TITLE,MB_OK|MB_ICONWARNING);
     }
 }
-/* [AI:GPT-6 | 2026-10-09] 1.6.8: enumerate one explicitly
+/* [AI:GPT-6 | 2026-10-09] 1.6.9: enumerate one explicitly
  * selected organization, with authorization enforced on the server. */
 static void prompt_list_projects(void){
     char org[64],path[200],response[8192],message[256];
@@ -683,7 +683,7 @@ static void prompt_list_projects(void){
         MessageBoxA(main_window,message,APP_TITLE,MB_OK|MB_ICONWARNING);
     }
 }
-/* [AI:GPT-6 | 2026-10-09] 1.6.8: Operator explicitly specifies
+/* [AI:GPT-6 | 2026-10-09] 1.6.9: Operator explicitly specifies
  * org/project/security-channel-id/user. Authority stays on the server.
  * This operation never provisions an arbitrary non-Security channel. */
 static void prompt_security_grant(void){
