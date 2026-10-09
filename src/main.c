@@ -7,8 +7,8 @@
 
 #pragma comment(lib,"winhttp.lib")
 
-#define DIGIT_GUI_VERSION "1.6.9"
-#define APP_TITLE "Digit GUI 1.6.9"
+#define DIGIT_GUI_VERSION "1.6.10"
+#define APP_TITLE "Digit GUI 1.6.10"
 #define ID_CHANNELS 1001
 #define ID_OUTPUT 1002
 #define ID_INPUT 1003
@@ -27,6 +27,10 @@
 #define ID_BIND_SECURITY 1016
 #define ID_LIST_PROJECTS 1017
 #define ID_SECURITY_GRANT 1018
+#define ID_USERS_PANEL 1019
+#define ID_SA_LOAD 1020
+#define ID_SA_ASSIGN 1021
+#define ID_SA_REVOKE 1022
 #define BUFFER_MAX 65536
 #define CHANNEL_MAX 128
 #define ALERT_MAX 256
@@ -48,7 +52,8 @@ static HFONT ui_font;
 #define DIGIT_SURFACE RGB(31,42,60)
 #define DIGIT_TEXT RGB(234,241,250)
 #define DIGIT_MUTED RGB(173,190,213)
-static HWND main_window,channel_list,output_box,input_box,send_button,status_text,new_channel_button,alerts_list,ack_button,refresh_button,username_box,password_box,login_button,logout_button,sa_button,new_project_button,bind_security_button,list_projects_button,security_grant_button;
+static HWND main_window,channel_list,output_box,input_box,send_button,status_text,new_channel_button,alerts_list,ack_button,refresh_button,username_box,password_box,login_button,logout_button,sa_button,new_project_button,bind_security_button,list_projects_button,security_grant_button,users_button;
+static HWND users_window,users_org_edit,users_target_edit,users_roster,users_feedback;
 static char digit_host[256]="127.0.0.1";
 static INTERNET_PORT digit_port=8081;
 static channel_item_t channels[CHANNEL_MAX];static size_t channel_count=0;
@@ -73,10 +78,11 @@ static void clear_session(void){SecureZeroMemory(session_token,sizeof(session_to
 /* [AI:GPT-6 | 2026-10-09] Signed-out GUI exposes no administrative controls.
  * Server-side SA policy remains the authority for all operations. */
 static void set_access_controls(int enabled){
+ShowWindow(users_button,enabled?SW_SHOW:SW_HIDE);
 ShowWindow(sa_button,enabled?SW_SHOW:SW_HIDE);
 ShowWindow(new_project_button,enabled?SW_SHOW:SW_HIDE);
 ShowWindow(list_projects_button,enabled?SW_SHOW:SW_HIDE);
-EnableWindow(channel_list,enabled);EnableWindow(output_box,enabled);EnableWindow(input_box,enabled);EnableWindow(send_button,enabled);EnableWindow(new_channel_button,enabled);EnableWindow(alerts_list,enabled);EnableWindow(ack_button,enabled);EnableWindow(refresh_button,enabled);EnableWindow(logout_button,enabled);EnableWindow(sa_button,enabled);EnableWindow(new_project_button,enabled);EnableWindow(bind_security_button,FALSE);EnableWindow(list_projects_button,enabled);EnableWindow(security_grant_button,FALSE);}
+EnableWindow(users_button,enabled);EnableWindow(channel_list,enabled);EnableWindow(output_box,enabled);EnableWindow(input_box,enabled);EnableWindow(send_button,enabled);EnableWindow(new_channel_button,enabled);EnableWindow(alerts_list,enabled);EnableWindow(ack_button,enabled);EnableWindow(refresh_button,enabled);EnableWindow(logout_button,enabled);EnableWindow(sa_button,enabled);EnableWindow(new_project_button,enabled);EnableWindow(bind_security_button,FALSE);EnableWindow(list_projects_button,enabled);EnableWindow(security_grant_button,FALSE);}
 
 
 static void trim_line(char *text){size_t n;if(!text)return;n=strlen(text);while(n>0&&(text[n-1]=='\r'||text[n-1]=='\n'||text[n-1]==' '||text[n-1]=='\t'))text[--n]=0;}
@@ -552,6 +558,136 @@ static int chat_sa_command(const char *text){
     SecureZeroMemory(body,sizeof(body));
     return 1;
 }
+/* [AI:GPT-6 | 2026-10-09] Native Windows SA roster.
+ * Every read/write is authorized by the existing server endpoint.
+ * No GUI-local role assignment, enrollment or privilege inference. */
+static int sa_panel_identifier(const char *name){
+ size_t i,n=strlen(name);
+ if(!n||n>=64)return 0;
+ for(i=0;i<n;i++){
+  unsigned char c=(unsigned char)name[i];
+  if(!((c>='a'&&c<='z')||(c>='A'&&c<='Z')||
+       (c>='0'&&c<='9')||c=='-'||c=='_'||c=='.'))return 0;
+ }
+ return 1;
+}
+static void sa_panel_request(const char *command){
+ char org[64],user[64]="",body[160],reply[8192]={0},line[320];
+ char record[1024],name[128],role[32];const char *cursor;
+ DWORD error=0,status=0;unsigned int total=0;
+ if(!session_authenticated||!users_window)return;
+ GetWindowTextA(users_org_edit,org,sizeof(org));
+ if(strcmp(command,"list"))GetWindowTextA(users_target_edit,user,sizeof(user));
+ if(!sa_panel_identifier(org)||
+    (strcmp(command,"list")&&!sa_panel_identifier(user))){
+  SetWindowTextA(users_feedback,"Enter a valid organization and user identifier.");return;
+ }
+ snprintf(body,sizeof(body),"%s\t%s\t%s",command,org,user);
+ if(!digit_request("POST","/admin/sa",body,reply,sizeof(reply),10000,&error,&status)){
+  snprintf(line,sizeof(line),"Denied / unavailable (HTTP %lu, network %lu). %.130s",
+   (unsigned long)status,(unsigned long)error,reply);
+  SetWindowTextA(users_feedback,line);
+  SecureZeroMemory(body,sizeof(body));return;
+ }
+ SecureZeroMemory(body,sizeof(body));
+ if(strcmp(command,"list")){
+  if(!strstr(reply,"\"updated\":true")){
+   SetWindowTextA(users_feedback,"Unexpected server response; operation not confirmed.");return;
+  }
+  SetWindowTextA(users_feedback,!strcmp(command,"assign")?
+     "SA assignment accepted by server. Reloading roster.":
+     "SA revocation accepted by server. Reloading roster.");
+  sa_panel_request("list");return;
+ }
+ cursor=strstr(reply,"\"assignments\":[");
+ if(!cursor){SetWindowTextA(users_feedback,"Roster response missing assignments.");return;}
+ SendMessageA(users_roster,LB_RESETCONTENT,0,0);
+ cursor=strchr(cursor,'[')+1;
+ while((cursor=strstr(cursor,"\"user\":\""))!=NULL){
+  const char *end=strchr(cursor,'}');
+  size_t n;if(!end)break;n=(size_t)(end-cursor);
+  if(n>=sizeof(record))break;
+  memcpy(record,cursor,n);record[n]=0;
+  if(!json_string_after(record,"user",name,sizeof(name))||
+     !json_string_after(record,"role",role,sizeof(role)))break;
+  snprintf(line,sizeof(line),"%-22.22s  %-6.6s  %s  %s",
+   name,role,strstr(record,"\"assigned\":true")?"Assigned":"Inactive",
+   strstr(record,"\"qualified\":true")&&strstr(record,"\"mission_qualified\":true")?
+     "Qualified":"Not qualified");
+  SendMessageA(users_roster,LB_ADDSTRING,0,(LPARAM)line);
+  ++total;cursor=end+1;if(*cursor==']')break;
+ }
+ snprintf(line,sizeof(line),"%s: %u SA roster record(s). Server verified.",org,total);
+ SetWindowTextA(users_feedback,line);
+}
+static LRESULT CALLBACK sa_panel_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp){
+ switch(message){
+ case WM_COMMAND:
+  switch(LOWORD(wp)){
+   case ID_SA_LOAD:sa_panel_request("list");return 0;
+   case ID_SA_ASSIGN:sa_panel_request("assign");return 0;
+   case ID_SA_REVOKE:sa_panel_request("revoke");return 0;
+  }break;
+ case WM_CLOSE:DestroyWindow(hwnd);return 0;
+ case WM_DESTROY:
+  users_window=NULL;users_org_edit=NULL;users_target_edit=NULL;
+  users_roster=NULL;users_feedback=NULL;return 0;
+ case WM_CTLCOLORSTATIC:
+ case WM_CTLCOLOREDIT:
+ case WM_CTLCOLORLISTBOX:{
+  HDC dc=(HDC)wp;
+  SetTextColor(dc,DIGIT_TEXT);
+  SetBkColor(dc,message==WM_CTLCOLORSTATIC?DIGIT_BG:DIGIT_SURFACE);
+  return (LRESULT)(message==WM_CTLCOLORSTATIC?surface_brush:input_brush);
+ }
+ }
+ return DefWindowProcA(hwnd,message,wp,lp);
+}
+static void sa_panel_open(void){
+ static int registered=0;
+ WNDCLASSA wc={0};HWND label,target_label,load,assign,revoke;
+ HWND controls[8];size_t i;
+ if(!session_authenticated)return;
+ if(users_window){ShowWindow(users_window,SW_RESTORE);SetForegroundWindow(users_window);return;}
+ if(!registered){
+  wc.lpfnWndProc=sa_panel_proc;wc.hInstance=GetModuleHandleA(NULL);
+  wc.lpszClassName="DigitSARosterWindow";wc.hbrBackground=surface_brush;
+  wc.hCursor=LoadCursor(NULL,IDC_ARROW);
+  if(!RegisterClassA(&wc))return;registered=1;
+ }
+ users_window=CreateWindowExA(WS_EX_TOOLWINDOW,"DigitSARosterWindow",
+  "Digit - Organization Security Administration",
+  WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,
+  CW_USEDEFAULT,CW_USEDEFAULT,630,425,main_window,NULL,GetModuleHandleA(NULL),NULL);
+ if(!users_window)return;
+ label=CreateWindowA("STATIC","Organization",WS_CHILD|WS_VISIBLE,
+  16,16,120,22,users_window,NULL,NULL,NULL);
+ users_org_edit=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT",selected_org,
+  WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,140,12,190,26,
+  users_window,NULL,NULL,NULL);
+ load=CreateWindowA("BUTTON","Load Users",WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+  342,12,118,26,users_window,(HMENU)ID_SA_LOAD,NULL,NULL);
+ users_roster=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",
+  WS_CHILD|WS_VISIBLE|WS_VSCROLL|WS_TABSTOP,16,52,580,222,
+  users_window,NULL,NULL,NULL);
+ target_label=CreateWindowA("STATIC","User identifier",WS_CHILD|WS_VISIBLE,
+  16,294,120,23,users_window,NULL,NULL,NULL);
+ users_target_edit=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",
+  WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,140,289,190,27,
+  users_window,NULL,NULL,NULL);
+ assign=CreateWindowA("BUTTON","Assign SA",WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+  342,289,115,28,users_window,(HMENU)ID_SA_ASSIGN,NULL,NULL);
+ revoke=CreateWindowA("BUTTON","Revoke SA",WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+  466,289,130,28,users_window,(HMENU)ID_SA_REVOKE,NULL,NULL);
+ users_feedback=CreateWindowA("STATIC","Organization-scoped SA roster; server enforces authorization.",
+  WS_CHILD|WS_VISIBLE,16,331,580,38,users_window,NULL,NULL,NULL);
+ controls[0]=label;controls[1]=users_org_edit;controls[2]=load;controls[3]=users_roster;
+ controls[4]=target_label;controls[5]=users_target_edit;controls[6]=assign;controls[7]=revoke;
+ for(i=0;i<8;i++)SendMessageA(controls[i],WM_SETFONT,(WPARAM)ui_font,TRUE);
+ SendMessageA(users_feedback,WM_SETFONT,(WPARAM)ui_font,TRUE);
+ ShowWindow(users_window,SW_SHOW);
+ if(sa_panel_identifier(selected_org))sa_panel_request("list");
+}
 static void send_question(void){digit_request_job_t *job;HANDLE thread;char question[4096];GetWindowTextA(input_box,question,sizeof(question));if(!question[0])return;if(strncmp(question,"/ack ",5)==0){if(chat_acknowledge(question))return;}if(strncmp(question,"/sa ",4)==0){if(chat_sa_command(question))return;}if(!active_channel[0])return;
 job=(digit_request_job_t *)calloc(1,sizeof(*job));if(!job){append_output("Digit GUI","Unable to allocate request.");return;}strcpy_s(job->question,sizeof(job->question),question);strcpy_s(job->channel_id,sizeof(job->channel_id),active_channel);append_output("You",question);SetWindowTextA(input_box,"");SetWindowTextA(status_text,"Waiting for Digit...");EnableWindow(send_button,FALSE);thread=CreateThread(NULL,0,ask_worker,job,0,NULL);if(!thread){free(job);EnableWindow(send_button,TRUE);append_output("Digit GUI","Unable to start request thread.");return;}CloseHandle(thread);}
 static void create_channel(void){char name[128],response[2048];DWORD e,s;if(DialogBoxParamA(NULL,NULL,main_window,NULL,0))return;(void)name;(void)response;(void)e;(void)s;}
@@ -741,12 +877,13 @@ username_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|ES_A
 password_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|ES_PASSWORD|ES_AUTOHSCROLL|WS_TABSTOP,160,12,138,25,hwnd,(HMENU)ID_PASSWORD,NULL,NULL);
 login_button=CreateWindowA("BUTTON","Log In",WS_CHILD|WS_VISIBLE|WS_TABSTOP,308,12,78,25,hwnd,(HMENU)ID_LOGIN,NULL,NULL);
 logout_button=CreateWindowA("BUTTON","Log Out",WS_CHILD|WS_VISIBLE|WS_TABSTOP,396,12,78,25,hwnd,(HMENU)ID_LOGOUT,NULL,NULL);
+users_button=CreateWindowA("BUTTON","Users",WS_CHILD|WS_VISIBLE|WS_TABSTOP,484,12,90,25,hwnd,(HMENU)ID_USERS_PANEL,NULL,NULL);
 sa_button=CreateWindowA("BUTTON","SA Access",WS_CHILD|WS_VISIBLE|WS_TABSTOP,484,12,90,25,hwnd,(HMENU)ID_SA_CHECK,NULL,NULL);
 new_project_button=CreateWindowA("BUTTON","Setup Channels",WS_CHILD|WS_VISIBLE|WS_TABSTOP,584,12,105,25,hwnd,(HMENU)ID_NEW_PROJECT,NULL,NULL);
 bind_security_button=CreateWindowA("BUTTON","Bind Security",WS_CHILD,699,12,112,25,hwnd,(HMENU)ID_BIND_SECURITY,NULL,NULL);
 list_projects_button=CreateWindowA("BUTTON","List Projects",WS_CHILD|WS_VISIBLE|WS_TABSTOP,821,12,112,25,hwnd,(HMENU)ID_LIST_PROJECTS,NULL,NULL);
 security_grant_button=CreateWindowA("BUTTON","Grant Security",WS_CHILD,943,12,112,25,hwnd,(HMENU)ID_SECURITY_GRANT,NULL,NULL);
-{ HWND controls[]={username_box,password_box,login_button,logout_button,sa_button,new_project_button,bind_security_button,list_projects_button,security_grant_button};size_t ci;for(ci=0;ci<sizeof(controls)/sizeof(controls[0]);++ci)SendMessageA(controls[ci],WM_SETFONT,(WPARAM)ui_font,TRUE);}
+{ HWND controls[]={username_box,password_box,login_button,logout_button,users_button,sa_button,new_project_button,bind_security_button,list_projects_button,security_grant_button};size_t ci;for(ci=0;ci<sizeof(controls)/sizeof(controls[0]);++ci)SendMessageA(controls[ci],WM_SETFONT,(WPARAM)ui_font,TRUE);}
 
 channel_list=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|LBS_NOTIFY|WS_TABSTOP,12,12,170,310,hwnd,(HMENU)ID_CHANNELS,NULL,NULL);new_channel_button=CreateWindowA("BUTTON","New Channel",WS_CHILD|WS_VISIBLE|WS_TABSTOP,12,328,170,28,hwnd,(HMENU)ID_NEW_CHANNEL,NULL,NULL);output_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL|WS_TABSTOP,194,12,560,390,hwnd,(HMENU)ID_OUTPUT,NULL,NULL);alerts_list=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",WS_CHILD|WS_VSCROLL|LBS_NOTIFY,766,12,250,310,hwnd,(HMENU)ID_ALERTS,NULL,NULL);ack_button=CreateWindowA("BUTTON","Acknowledge",WS_CHILD,766,328,120,28,hwnd,(HMENU)ID_ACK_ALERT,NULL,NULL);refresh_button=CreateWindowA("BUTTON","Refresh",WS_CHILD|WS_VISIBLE|WS_TABSTOP,896,328,120,28,hwnd,(HMENU)ID_REFRESH,NULL,NULL);input_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL|WS_TABSTOP,194,414,460,28,hwnd,(HMENU)ID_INPUT,NULL,NULL);send_button=CreateWindowA("BUTTON","Send",WS_CHILD|WS_VISIBLE|BS_DEFPUSHBUTTON|WS_TABSTOP,664,414,90,28,hwnd,(HMENU)ID_SEND,NULL,NULL);status_text=CreateWindowA("STATIC","Checking...",WS_CHILD|WS_VISIBLE,12,452,1000,20,hwnd,(HMENU)ID_STATUS,NULL,NULL);
 { HWND controls[]={channel_list,new_channel_button,output_box,input_box,send_button,alerts_list,ack_button,refresh_button,status_text};size_t ci;for(ci=0;ci<sizeof(controls)/sizeof(controls[0]);++ci)if(controls[ci])SendMessageA(controls[ci],WM_SETFONT,(WPARAM)ui_font,TRUE);}
@@ -759,12 +896,12 @@ case WM_CTLCOLORLISTBOX:{
  SetBkColor(dc,msg==WM_CTLCOLORSTATIC?DIGIT_BG:DIGIT_SURFACE);
  return (LRESULT)(msg==WM_CTLCOLORSTATIC?surface_brush:input_brush);
 }
-case WM_COMMAND:switch(LOWORD(wparam)){case ID_LOGIN:do_login();return 0;case ID_LOGOUT:do_logout();return 0;case ID_SA_CHECK:check_sa();return 0;case ID_NEW_PROJECT:setup_project_security();return 0;case ID_BIND_SECURITY:prompt_bind_security();return 0;case ID_LIST_PROJECTS:prompt_list_projects();return 0;case ID_SECURITY_GRANT:prompt_security_grant();return 0;case ID_SEND:send_question();SetFocus(input_box);return 0;case ID_CHANNELS:if(HIWORD(wparam)==LBN_SELCHANGE){LRESULT sel=SendMessageA(channel_list,LB_GETCURSEL,0,0);if(sel!=LB_ERR){LRESULT index=SendMessageA(channel_list,LB_GETITEMDATA,(WPARAM)sel,0);if(index!=LB_ERR&&index>=0&&(size_t)index<channel_count){strcpy_s(active_channel,sizeof(active_channel),channels[index].id);strcpy_s(selected_org,sizeof(selected_org),channels[index].organization);strcpy_s(selected_project,sizeof(selected_project),channels[index].project);load_history();}else if(index<=-2&&(size_t)(-2-index)<channel_count){size_t project_index=(size_t)(-2-index);strcpy_s(selected_org,sizeof(selected_org),channels[project_index].organization);strcpy_s(selected_project,sizeof(selected_project),channels[project_index].project);}}}return 0;case ID_NEW_CHANNEL:prompt_new_channel();return 0;case ID_ACK_ALERT:acknowledge_alert();return 0;case ID_REFRESH:refresh_all();return 0;}break;case WM_TIMER:if(wparam==ID_SYNC_TIMER){start_sync();return 0;}break;
+case WM_COMMAND:switch(LOWORD(wparam)){case ID_LOGIN:do_login();return 0;case ID_LOGOUT:do_logout();return 0;case ID_SA_CHECK:check_sa();return 0;case ID_USERS_PANEL:sa_panel_open();return 0;case ID_NEW_PROJECT:setup_project_security();return 0;case ID_BIND_SECURITY:prompt_bind_security();return 0;case ID_LIST_PROJECTS:prompt_list_projects();return 0;case ID_SECURITY_GRANT:prompt_security_grant();return 0;case ID_SEND:send_question();SetFocus(input_box);return 0;case ID_CHANNELS:if(HIWORD(wparam)==LBN_SELCHANGE){LRESULT sel=SendMessageA(channel_list,LB_GETCURSEL,0,0);if(sel!=LB_ERR){LRESULT index=SendMessageA(channel_list,LB_GETITEMDATA,(WPARAM)sel,0);if(index!=LB_ERR&&index>=0&&(size_t)index<channel_count){strcpy_s(active_channel,sizeof(active_channel),channels[index].id);strcpy_s(selected_org,sizeof(selected_org),channels[index].organization);strcpy_s(selected_project,sizeof(selected_project),channels[index].project);load_history();}else if(index<=-2&&(size_t)(-2-index)<channel_count){size_t project_index=(size_t)(-2-index);strcpy_s(selected_org,sizeof(selected_org),channels[project_index].organization);strcpy_s(selected_project,sizeof(selected_project),channels[project_index].project);}}}return 0;case ID_NEW_CHANNEL:prompt_new_channel();return 0;case ID_ACK_ALERT:acknowledge_alert();return 0;case ID_REFRESH:refresh_all();return 0;}break;case WM_TIMER:if(wparam==ID_SYNC_TIMER){start_sync();return 0;}break;
 case WM_DIGIT_REFRESH:if(lparam){apply_sync((digit_sync_result_t *)lparam);}return 0;
 case WM_DIGIT_RESULT:{digit_result_t *result=(digit_result_t *)lparam;char message[512];EnableWindow(send_button,TRUE);if(result){if(result->ok){if(strcmp(result->channel_id,active_channel)==0)append_output("Digit",result->answer);}else if(result->http_status){snprintf(message,sizeof(message),"Digit returned HTTP status %lu.",(unsigned long)result->http_status);append_output("Digit GUI",message);}else{snprintf(message,sizeof(message),"Windows network error %lu while waiting for Digit.",(unsigned long)result->error);append_output("Digit GUI",message);}free(result);}SetFocus(input_box);return 0;}case WM_SIZE:{int w=LOWORD(lparam),h=HIWORD(lparam),left=170,right=0,center=w-left-48;
 MoveWindow(username_box,12,12,138,25,TRUE);MoveWindow(password_box,160,12,138,25,TRUE);
 MoveWindow(login_button,308,12,78,25,TRUE);MoveWindow(logout_button,396,12,78,25,TRUE);
-MoveWindow(sa_button,484,12,90,25,TRUE);MoveWindow(new_project_button,584,12,105,25,TRUE);MoveWindow(bind_security_button,699,12,112,25,TRUE);MoveWindow(list_projects_button,821,12,112,25,TRUE);MoveWindow(security_grant_button,943,12,112,25,TRUE);
+MoveWindow(users_button,484,12,80,25,TRUE);MoveWindow(sa_button,574,12,90,25,TRUE);MoveWindow(new_project_button,674,12,105,25,TRUE);MoveWindow(bind_security_button,699,12,112,25,TRUE);MoveWindow(list_projects_button,891,12,112,25,TRUE);MoveWindow(security_grant_button,943,12,112,25,TRUE);
 MoveWindow(channel_list,12,48,left,h-166,TRUE);MoveWindow(new_channel_button,12,h-112,left,28,TRUE);
 MoveWindow(output_box,194,48,center,h-128,TRUE);MoveWindow(input_box,194,h-68,center-102,28,TRUE);
 MoveWindow(send_button,194+center-90,h-68,90,28,TRUE);
