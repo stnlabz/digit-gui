@@ -24,6 +24,7 @@
 #define ID_USERNAME 1013
 #define ID_PASSWORD 1014
 #define ID_NEW_PROJECT 1015
+#define ID_BIND_SECURITY 1016
 #define BUFFER_MAX 65536
 #define CHANNEL_MAX 128
 #define ALERT_MAX 256
@@ -36,7 +37,7 @@ typedef struct{char id[64];char severity[16];char summary[256];int acknowledged;
 typedef struct{int ok;DWORD error;DWORD http_status;char answer[4096];char channel_id[64];} digit_result_t;
 typedef struct{char question[4096];char channel_id[64];} digit_request_job_t;
 
-static HWND main_window,channel_list,output_box,input_box,send_button,status_text,new_channel_button,alerts_list,ack_button,refresh_button,username_box,password_box,login_button,logout_button,sa_button,new_project_button;
+static HWND main_window,channel_list,output_box,input_box,send_button,status_text,new_channel_button,alerts_list,ack_button,refresh_button,username_box,password_box,login_button,logout_button,sa_button,new_project_button,bind_security_button;
 static char digit_host[256]="127.0.0.1";
 static INTERNET_PORT digit_port=8081;
 static channel_item_t channels[CHANNEL_MAX];static size_t channel_count=0;
@@ -48,7 +49,7 @@ static char session_token[129];
 static char session_identity[64];
 static int session_authenticated=0;
 static void clear_session(void){SecureZeroMemory(session_token,sizeof(session_token));SecureZeroMemory(session_identity,sizeof(session_identity));session_authenticated=0;}
-static void set_access_controls(int enabled){EnableWindow(channel_list,enabled);EnableWindow(output_box,enabled);EnableWindow(input_box,enabled);EnableWindow(send_button,enabled);EnableWindow(new_channel_button,enabled);EnableWindow(alerts_list,enabled);EnableWindow(ack_button,enabled);EnableWindow(refresh_button,enabled);EnableWindow(logout_button,enabled);EnableWindow(sa_button,enabled);EnableWindow(new_project_button,enabled);}
+static void set_access_controls(int enabled){EnableWindow(channel_list,enabled);EnableWindow(output_box,enabled);EnableWindow(input_box,enabled);EnableWindow(send_button,enabled);EnableWindow(new_channel_button,enabled);EnableWindow(alerts_list,enabled);EnableWindow(ack_button,enabled);EnableWindow(refresh_button,enabled);EnableWindow(logout_button,enabled);EnableWindow(sa_button,enabled);EnableWindow(new_project_button,enabled);EnableWindow(bind_security_button,enabled);}
 
 
 static void trim_line(char *text){size_t n;if(!text)return;n=strlen(text);while(n>0&&(text[n-1]=='\r'||text[n-1]=='\n'||text[n-1]==' '||text[n-1]=='\t'))text[--n]=0;}
@@ -188,6 +189,25 @@ static void prompt_new_project(void){
     }
     SecureZeroMemory(body,sizeof(body));
 }
+/* [AI:GPT-6 | 2026-10-09] Explicit SA security binding uses
+ * the already qualified server-side project membership checks. */
+static void prompt_bind_security(void){
+    char scope[160],path[240],response[512],message[256],*slash;
+    DWORD error=0,status=0;
+    if(!session_authenticated)return;
+    if(GetWindowTextA(input_box,scope,sizeof(scope))<=0)return;
+    slash=strchr(scope,'/');
+    if(!slash || slash==scope || !slash[1] || strchr(slash+1,'/')){
+        MessageBoxA(main_window,"Enter organization/project in the input box.",APP_TITLE,MB_OK|MB_ICONWARNING);return;
+    }
+    if(snprintf(path,sizeof(path),"/projects/%s/security/bind",scope)<=0)return;
+    if(digit_request("POST",path,"",response,sizeof(response),10000,&error,&status))
+        MessageBoxA(main_window,"Project Security channel bound. Channel visibility still requires a separate authorized grant.",APP_TITLE,MB_OK|MB_ICONINFORMATION);
+    else{
+        snprintf(message,sizeof(message),"Security binding failed: HTTP %lu / WinHTTP %lu.",(unsigned long)status,(unsigned long)error);
+        MessageBoxA(main_window,message,APP_TITLE,MB_OK|MB_ICONWARNING);
+    }
+}
 static void acknowledge_alert(void){LRESULT sel=SendMessageA(alerts_list,LB_GETCURSEL,0,0);char path[256],response[4096];DWORD e,s;if(sel==LB_ERR||(size_t)sel>=alert_count)return;snprintf(path,sizeof(path),"/alerts/%s/acknowledge",alerts[sel].id);if(digit_request("POST",path,"",response,sizeof(response),10000,&e,&s))load_alerts();}
 static LRESULT CALLBACK window_proc(HWND hwnd,UINT msg,WPARAM wparam,LPARAM lparam){switch(msg){case WM_CREATE:main_window=hwnd;
 username_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL,12,12,138,25,hwnd,(HMENU)ID_USERNAME,NULL,NULL);
@@ -196,10 +216,11 @@ login_button=CreateWindowA("BUTTON","Log In",WS_CHILD|WS_VISIBLE,308,12,78,25,hw
 logout_button=CreateWindowA("BUTTON","Log Out",WS_CHILD|WS_VISIBLE,396,12,78,25,hwnd,(HMENU)ID_LOGOUT,NULL,NULL);
 sa_button=CreateWindowA("BUTTON","SA Access",WS_CHILD|WS_VISIBLE,484,12,90,25,hwnd,(HMENU)ID_SA_CHECK,NULL,NULL);
 new_project_button=CreateWindowA("BUTTON","New Project",WS_CHILD|WS_VISIBLE,584,12,105,25,hwnd,(HMENU)ID_NEW_PROJECT,NULL,NULL);
-channel_list=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|LBS_NOTIFY,12,12,170,310,hwnd,(HMENU)ID_CHANNELS,NULL,NULL);new_channel_button=CreateWindowA("BUTTON","New Channel",WS_CHILD|WS_VISIBLE,12,328,170,28,hwnd,(HMENU)ID_NEW_CHANNEL,NULL,NULL);output_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,194,12,560,390,hwnd,(HMENU)ID_OUTPUT,NULL,NULL);alerts_list=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|LBS_NOTIFY,766,12,250,310,hwnd,(HMENU)ID_ALERTS,NULL,NULL);ack_button=CreateWindowA("BUTTON","Acknowledge",WS_CHILD|WS_VISIBLE,766,328,120,28,hwnd,(HMENU)ID_ACK_ALERT,NULL,NULL);refresh_button=CreateWindowA("BUTTON","Refresh",WS_CHILD|WS_VISIBLE,896,328,120,28,hwnd,(HMENU)ID_REFRESH,NULL,NULL);input_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL,194,414,460,28,hwnd,(HMENU)ID_INPUT,NULL,NULL);send_button=CreateWindowA("BUTTON","Send",WS_CHILD|WS_VISIBLE|BS_DEFPUSHBUTTON,664,414,90,28,hwnd,(HMENU)ID_SEND,NULL,NULL);status_text=CreateWindowA("STATIC","Checking...",WS_CHILD|WS_VISIBLE,12,452,1000,20,hwnd,(HMENU)ID_STATUS,NULL,NULL);set_access_controls(FALSE);SetWindowTextA(status_text,"Sign in to Digit");SendMessageA(hwnd,WM_SIZE,0,MAKELPARAM(1040,560));return 0;case WM_COMMAND:switch(LOWORD(wparam)){case ID_LOGIN:do_login();return 0;case ID_LOGOUT:do_logout();return 0;case ID_SA_CHECK:check_sa();return 0;case ID_NEW_PROJECT:prompt_new_project();return 0;case ID_SEND:send_question();SetFocus(input_box);return 0;case ID_CHANNELS:if(HIWORD(wparam)==LBN_SELCHANGE){LRESULT sel=SendMessageA(channel_list,LB_GETCURSEL,0,0);if(sel!=LB_ERR&&(size_t)sel<channel_count){strcpy_s(active_channel,sizeof(active_channel),channels[sel].id);load_history();load_alerts();}}return 0;case ID_NEW_CHANNEL:prompt_new_channel();return 0;case ID_ACK_ALERT:acknowledge_alert();return 0;case ID_REFRESH:refresh_all();return 0;}break;case WM_DIGIT_RESULT:{digit_result_t *result=(digit_result_t *)lparam;char message[512];EnableWindow(send_button,TRUE);if(result){if(result->ok){if(strcmp(result->channel_id,active_channel)==0)append_output("Digit",result->answer);load_alerts();}else if(result->http_status){snprintf(message,sizeof(message),"Digit returned HTTP status %lu.",(unsigned long)result->http_status);append_output("Digit GUI",message);}else{snprintf(message,sizeof(message),"Windows network error %lu while waiting for Digit.",(unsigned long)result->error);append_output("Digit GUI",message);}free(result);}SetFocus(input_box);return 0;}case WM_SIZE:{int w=LOWORD(lparam),h=HIWORD(lparam),left=170,right=250,center=w-left-right-48;
+bind_security_button=CreateWindowA("BUTTON","Bind Security",WS_CHILD|WS_VISIBLE,699,12,112,25,hwnd,(HMENU)ID_BIND_SECURITY,NULL,NULL);
+channel_list=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|LBS_NOTIFY,12,12,170,310,hwnd,(HMENU)ID_CHANNELS,NULL,NULL);new_channel_button=CreateWindowA("BUTTON","New Channel",WS_CHILD|WS_VISIBLE,12,328,170,28,hwnd,(HMENU)ID_NEW_CHANNEL,NULL,NULL);output_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,194,12,560,390,hwnd,(HMENU)ID_OUTPUT,NULL,NULL);alerts_list=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|LBS_NOTIFY,766,12,250,310,hwnd,(HMENU)ID_ALERTS,NULL,NULL);ack_button=CreateWindowA("BUTTON","Acknowledge",WS_CHILD|WS_VISIBLE,766,328,120,28,hwnd,(HMENU)ID_ACK_ALERT,NULL,NULL);refresh_button=CreateWindowA("BUTTON","Refresh",WS_CHILD|WS_VISIBLE,896,328,120,28,hwnd,(HMENU)ID_REFRESH,NULL,NULL);input_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL,194,414,460,28,hwnd,(HMENU)ID_INPUT,NULL,NULL);send_button=CreateWindowA("BUTTON","Send",WS_CHILD|WS_VISIBLE|BS_DEFPUSHBUTTON,664,414,90,28,hwnd,(HMENU)ID_SEND,NULL,NULL);status_text=CreateWindowA("STATIC","Checking...",WS_CHILD|WS_VISIBLE,12,452,1000,20,hwnd,(HMENU)ID_STATUS,NULL,NULL);set_access_controls(FALSE);SetWindowTextA(status_text,"Sign in to Digit");SendMessageA(hwnd,WM_SIZE,0,MAKELPARAM(1040,560));return 0;case WM_COMMAND:switch(LOWORD(wparam)){case ID_LOGIN:do_login();return 0;case ID_LOGOUT:do_logout();return 0;case ID_SA_CHECK:check_sa();return 0;case ID_NEW_PROJECT:prompt_new_project();return 0;case ID_BIND_SECURITY:prompt_bind_security();return 0;case ID_SEND:send_question();SetFocus(input_box);return 0;case ID_CHANNELS:if(HIWORD(wparam)==LBN_SELCHANGE){LRESULT sel=SendMessageA(channel_list,LB_GETCURSEL,0,0);if(sel!=LB_ERR&&(size_t)sel<channel_count){strcpy_s(active_channel,sizeof(active_channel),channels[sel].id);load_history();load_alerts();}}return 0;case ID_NEW_CHANNEL:prompt_new_channel();return 0;case ID_ACK_ALERT:acknowledge_alert();return 0;case ID_REFRESH:refresh_all();return 0;}break;case WM_DIGIT_RESULT:{digit_result_t *result=(digit_result_t *)lparam;char message[512];EnableWindow(send_button,TRUE);if(result){if(result->ok){if(strcmp(result->channel_id,active_channel)==0)append_output("Digit",result->answer);load_alerts();}else if(result->http_status){snprintf(message,sizeof(message),"Digit returned HTTP status %lu.",(unsigned long)result->http_status);append_output("Digit GUI",message);}else{snprintf(message,sizeof(message),"Windows network error %lu while waiting for Digit.",(unsigned long)result->error);append_output("Digit GUI",message);}free(result);}SetFocus(input_box);return 0;}case WM_SIZE:{int w=LOWORD(lparam),h=HIWORD(lparam),left=170,right=250,center=w-left-right-48;
 MoveWindow(username_box,12,12,138,25,TRUE);MoveWindow(password_box,160,12,138,25,TRUE);
 MoveWindow(login_button,308,12,78,25,TRUE);MoveWindow(logout_button,396,12,78,25,TRUE);
-MoveWindow(sa_button,484,12,90,25,TRUE);MoveWindow(new_project_button,584,12,105,25,TRUE);
+MoveWindow(sa_button,484,12,90,25,TRUE);MoveWindow(new_project_button,584,12,105,25,TRUE);MoveWindow(bind_security_button,699,12,112,25,TRUE);
 MoveWindow(channel_list,12,48,left,h-166,TRUE);MoveWindow(new_channel_button,12,h-112,left,28,TRUE);
 MoveWindow(output_box,194,48,center,h-128,TRUE);MoveWindow(input_box,194,h-68,center-102,28,TRUE);
 MoveWindow(send_button,194+center-90,h-68,90,28,TRUE);
