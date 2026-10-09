@@ -2,7 +2,7 @@
 
 Digit Desktop is a small, native Win32 C client for **Digit-native, IRC-like communications**. It is **not an IRC client or IRC protocol implementation**. Digit drives the communications service; the Windows GUI is a client of the authenticated Interface API.
 
-**Current source lineage:** the running GUI still identifies as **1.6.11**. The operator reported a Windows **BUILD GREEN** and supplied live screenshots on 2026-10-09. Interface **1.6.11** subsequently reported **46 scope-parser tests passed** and **39 historical regression suites passed**, with zero failures. Those test results do not by themselves prove a 1.6.11 module hotload.
+**Current source lineage:** the running GUI still identifies as **1.7.0**. The operator reported a Windows **BUILD GREEN** and supplied live screenshots on 2026-10-09. Interface **1.6.11** subsequently reported **46 scope-parser tests passed** and **39 historical regression suites passed**, with zero failures. Those test results do not by themselves prove a 1.6.11 module hotload.
 
 **Principles:** Small. Deterministic. Easy to use. Clear distinction between account, project membership, SA authority and channel participation.
 
