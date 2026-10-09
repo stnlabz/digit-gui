@@ -73,7 +73,7 @@ static unsigned int sync_generation=0;
 static char shown_channel[64]="";
 static unsigned long shown_hash=0;
 static unsigned long last_channel_list_hash=0;
-typedef struct {unsigned int generation;int channels_ok,messages_ok;char channel_id[64];char *channels_json,*messages_json;} digit_sync_result_t;
+typedef struct {unsigned int generation;int channels_ok,messages_ok,unauthorized;char channel_id[64];char *channels_json,*messages_json;} digit_sync_result_t;
 typedef struct {unsigned int generation;char channel_id[64];} digit_sync_job_t;
 static void clear_session(void){SecureZeroMemory(session_token,sizeof(session_token));SecureZeroMemory(session_identity,sizeof(session_identity));session_authenticated=0;}
 /* [AI:GPT-6 | 2026-10-09] Signed-out GUI exposes no administrative controls.
@@ -111,7 +111,7 @@ static void append_output(const char *speaker,const char *text){
 }
 static int json_string_after(const char *start,const char *key,char *out,size_t n){char pattern[128];const char *p;size_t o=0;snprintf(pattern,sizeof(pattern),"\"%s\":\"",key);p=strstr(start,pattern);if(!p)return 0;p+=strlen(pattern);while(*p&&o+1<n){if(*p=='"')break;if(*p=='\\'&&p[1]){++p;if(*p=='n')out[o++]='\n';else if(*p=='t')out[o++]='\t';else if(*p!='r')out[o++]=*p;++p;continue;}out[o++]=*p++;}out[o]=0;return *p=='"';}
 static int extract_answer(const char *json,char *answer,size_t n){return json_string_after(json,"answer",answer,n);}
-static int digit_request(const char *method,const char *path,const char *body,char *response,size_t response_size,DWORD receive_timeout,DWORD *error_out,DWORD *status_out){WCHAR host_w[256],path_w[512],method_w[16];HINTERNET session=NULL,connection=NULL,request=NULL;DWORD status=0,status_size=sizeof(status),available=0,read=0;size_t used=0;int ok=0;DWORD error=ERROR_SUCCESS;if(error_out)*error_out=0;if(status_out)*status_out=0;if(!MultiByteToWideChar(CP_UTF8,0,digit_host,-1,host_w,256)||!MultiByteToWideChar(CP_UTF8,0,path,-1,path_w,512)||!MultiByteToWideChar(CP_UTF8,0,method,-1,method_w,16)){error=GetLastError();goto done;}session=WinHttpOpen(L"Digit GUI/1.6.9",WINHTTP_ACCESS_TYPE_NO_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);if(!session){error=GetLastError();goto done;}if(!WinHttpSetTimeouts(session,5000,5000,10000,(int)receive_timeout)){error=GetLastError();goto done;}connection=WinHttpConnect(session,host_w,digit_port,0);if(!connection){error=GetLastError();goto done;}request=WinHttpOpenRequest(connection,method_w,path_w,NULL,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE);if(!request){error=GetLastError();goto done;}/* [AI:GPT-6 | 2026-10-08] Attach bearer only for authenticated API calls;
+static int digit_request(const char *method,const char *path,const char *body,char *response,size_t response_size,DWORD receive_timeout,DWORD *error_out,DWORD *status_out){WCHAR host_w[256],path_w[512],method_w[16];HINTERNET session=NULL,connection=NULL,request=NULL;DWORD status=0,status_size=sizeof(status),available=0,read=0;size_t used=0;int ok=0;DWORD error=ERROR_SUCCESS;if(error_out)*error_out=0;if(status_out)*status_out=0;if(!MultiByteToWideChar(CP_UTF8,0,digit_host,-1,host_w,256)||!MultiByteToWideChar(CP_UTF8,0,path,-1,path_w,512)||!MultiByteToWideChar(CP_UTF8,0,method,-1,method_w,16)){error=GetLastError();goto done;}session=WinHttpOpen(L"Digit GUI/1.6.10",WINHTTP_ACCESS_TYPE_NO_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);if(!session){error=GetLastError();goto done;}if(!WinHttpSetTimeouts(session,5000,5000,10000,(int)receive_timeout)){error=GetLastError();goto done;}connection=WinHttpConnect(session,host_w,digit_port,0);if(!connection){error=GetLastError();goto done;}request=WinHttpOpenRequest(connection,method_w,path_w,NULL,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE);if(!request){error=GetLastError();goto done;}/* [AI:GPT-6 | 2026-10-08] Attach bearer only for authenticated API calls;
  * login never transmits a previous token. */
 if(session_authenticated && strcmp(path,"/session/login")!=0){
     WCHAR auth_header[240];
@@ -179,6 +179,7 @@ static void do_logout(void){
     if(session_authenticated)(void)digit_request("POST","/session/logout","",response,sizeof(response),10000,&error,&status);
     KillTimer(main_window,ID_SYNC_TIMER);++sync_generation;shown_channel[0]=0;last_channel_list_hash=0;
     clear_session();set_access_controls(FALSE);EnableWindow(login_button,TRUE);
+    if(users_window)DestroyWindow(users_window);
     SendMessageA(channel_list,LB_RESETCONTENT,0,0);SendMessageA(alerts_list,LB_RESETCONTENT,0,0);
     active_channel[0]=0;channel_count=0;alert_count=0;
     SetWindowTextW(output_box,L"");SetWindowTextA(status_text,"Signed out");
@@ -389,9 +390,11 @@ static DWORD WINAPI sync_worker(LPVOID param){
         result->messages_json=(char *)calloc(1,BUFFER_MAX);
         if(result->channels_json&&result->messages_json){
             result->channels_ok=digit_request("GET","/channels",NULL,result->channels_json,BUFFER_MAX,10000,&error,&status);
+            if(!result->channels_ok&&status==401)result->unauthorized=1;
             if(result->channels_ok&&job->channel_id[0]){
                 snprintf(path,sizeof(path),"/channels/%s/messages",job->channel_id);
                 result->messages_ok=digit_request("GET",path,NULL,result->messages_json,BUFFER_MAX,10000,&error,&status);
+                if(!result->messages_ok&&status==401)result->unauthorized=1;
             }
         }
         if(!PostMessageA(main_window,WM_DIGIT_REFRESH,0,(LPARAM)result)){
@@ -414,6 +417,7 @@ static void start_sync(void){
     CloseHandle(worker);
 }
 static void apply_sync(digit_sync_result_t *result){
+    int expired=result->generation==sync_generation&&session_authenticated&&result->unauthorized;
     if(result->generation==sync_generation&&session_authenticated){
         if(result->channels_ok){
             unsigned long current=sync_hash(result->channels_json);
@@ -442,6 +446,21 @@ static void apply_sync(digit_sync_result_t *result){
     }
     free(result->channels_json);free(result->messages_json);free(result);
     InterlockedExchange(&sync_busy,0);
+    if(expired){
+      /* [AI:GPT-6 | 2026-10-09] A 401 is loss of authority, not a transient
+       * transport failure. Clear the session only on the UI thread. */
+      KillTimer(main_window,ID_SYNC_TIMER);++sync_generation;
+      clear_session();set_access_controls(FALSE);EnableWindow(login_button,TRUE);
+      if(users_window)DestroyWindow(users_window);
+      SendMessageA(channel_list,LB_RESETCONTENT,0,0);
+      SendMessageA(alerts_list,LB_RESETCONTENT,0,0);
+      channel_count=0;alert_count=0;active_channel[0]=0;
+      selected_org[0]=0;selected_project[0]=0;
+      shown_channel[0]=0;last_channel_list_hash=0;
+      SetWindowTextW(output_box,L"");
+      SetWindowTextA(status_text,"Session expired - sign in again");
+      MessageBoxA(main_window,"Digit session expired or was invalidated by server hotload. Please sign in again.",APP_TITLE,MB_OK|MB_ICONINFORMATION);
+    }
 }
 static void refresh_all(void){if(!session_authenticated)return;check_health();load_channels();load_history();start_sync();}
 static DWORD WINAPI ask_worker(LPVOID parameter){digit_request_job_t *job=(digit_request_job_t *)parameter;digit_result_t *result=(digit_result_t *)calloc(1,sizeof(*result));char response[BUFFER_MAX],path[256];if(!result){free(job);return 1;}strcpy_s(result->channel_id,sizeof(result->channel_id),job->channel_id);snprintf(path,sizeof(path),"/channels/%s/ask",job->channel_id);result->ok=digit_request("POST",path,job->question,response,sizeof(response),ASK_RECEIVE_TIMEOUT_MS,&result->error,&result->http_status);if(result->ok&&!extract_answer(response,result->answer,sizeof(result->answer))){result->ok=0;result->error=ERROR_INVALID_DATA;}free(job);PostMessageA(main_window,WM_DIGIT_RESULT,0,(LPARAM)result);return 0;}
