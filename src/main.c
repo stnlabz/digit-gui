@@ -44,7 +44,8 @@ static char digit_host[256]="127.0.0.1";
 static INTERNET_PORT digit_port=8081;
 static channel_item_t channels[CHANNEL_MAX];static size_t channel_count=0;
 static alert_item_t alerts[ALERT_MAX];static size_t alert_count=0;
-static char active_channel[64]="general";
+/* [AI:GPT-6 | 2026-10-09] No invisible legacy General selection. */
+static char active_channel[64]="";
 /* [AI:GPT-6 | 2026-10-08] Digit GUI 1.6.2: in-process bearer only.
  * No password or session token is written to configuration or disk. */
 static char session_token[129];
@@ -125,6 +126,7 @@ static void do_logout(void){
     if(session_authenticated)(void)digit_request("POST","/session/logout","",response,sizeof(response),10000,&error,&status);
     clear_session();set_access_controls(FALSE);EnableWindow(login_button,TRUE);
     SendMessageA(channel_list,LB_RESETCONTENT,0,0);SendMessageA(alerts_list,LB_RESETCONTENT,0,0);
+    active_channel[0]=0;channel_count=0;alert_count=0;
     SetWindowTextW(output_box,L"");SetWindowTextA(status_text,"Signed out");
 }
 /* [AI:GPT-6 | 2026-10-08] Interface 1.6.2 read-only SA dashboard.
