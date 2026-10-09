@@ -308,6 +308,51 @@ static int chat_acknowledge(const char *question){
 }
 /* [AI:GPT-6 | 2026-10-09] Operator SA commands use the exact server
  * authorization boundary. The GUI does not grant or infer SA authority. */
+/* [AI:GPT-6 | 2026-10-09] Human-readable SA projection; server remains authoritative. */
+static void sa_pretty(const char *command,const char *org,const char *user,const char *reply){
+    char msg[1024],name[128],role[32];
+    const char *cursor;
+    if(!strcmp(command,"list")){
+        snprintf(msg,sizeof(msg),"SECURITY ADMINISTRATION - %s\n----------------------------------------",org);
+        append_output("Digit",msg);
+        cursor=strstr(reply,"\"assignments\":[");
+        if(!cursor){append_output("Digit","Unable to display the administrator roster.");return;}
+        cursor=strchr(cursor,'[')+1;
+        if(*cursor==']'){append_output("Digit","No administrator records found.");return;}
+        while((cursor=strstr(cursor,"\"user\":\""))!=NULL){
+            const char *end=strchr(cursor,'}');
+            if(!end)break;
+            if(!json_string_after(cursor,"user",name,sizeof(name))||
+               !json_string_after(cursor,"role",role,sizeof(role)))break;
+            {
+                char item[1024];
+                size_t length=(size_t)(end-cursor);
+                int qualified=0,assigned=0,mission=0;
+                char record[1024];
+                if(length>=sizeof(record))break;
+                memcpy(record,cursor,length);record[length]=0;
+                qualified=strstr(record,"\"qualified\":true")!=NULL;
+                assigned=strstr(record,"\"assigned\":true")!=NULL;
+                mission=strstr(record,"\"mission_qualified\":true")!=NULL;
+                snprintf(item,sizeof(item),
+                         "User: %s\nRole: %s\nQualification: %s\nAssignment: %s\nMission qualification: %s",
+                         name,!strcmp(role,"SA")?"Security Administrator":role,
+                         qualified?"Verified":"Not verified",
+                         assigned?"Active":"Inactive",
+                         mission?"Verified":"Not verified");
+                append_output("Digit",item);
+            }
+            cursor=end+1;
+            if(*cursor==']')break;
+        }
+    }else if(strstr(reply,"\"bootstrapped\":true")||strstr(reply,"\"updated\":true")){
+        snprintf(msg,sizeof(msg),"%s: %s - %s (%s).",
+            !strcmp(command,"revoke")?"Access revoked":"Success",
+            user,org,!strcmp(command,"revoke")?"administrator assignment removed":
+            "security administrator assignment active");
+        append_output("Digit",msg);
+    }else append_output("Digit","Administrator request completed; response was not recognized.");
+}
 static int chat_sa_command(const char *text){
     char command[12],org[64],user[64]="",body[160],reply[8192]={0},msg[256];
     DWORD error=0,status=0;
@@ -337,7 +382,7 @@ static int chat_sa_command(const char *text){
     snprintf(body,sizeof(body),"%s\t%s\t%s",command,org,user);
     if(digit_request("POST","/admin/sa",body,reply,sizeof(reply),10000,&error,&status)){
         SetWindowTextA(input_box,"");
-        append_output("SA",reply);
+        sa_pretty(command,org,user,reply);
     }else{
         snprintf(msg,sizeof(msg),"SA command denied: HTTP %lu / WinHTTP %lu. %.120s",
                  (unsigned long)status,(unsigned long)error,reply);
@@ -346,7 +391,7 @@ static int chat_sa_command(const char *text){
     SecureZeroMemory(body,sizeof(body));
     return 1;
 }
-static void send_question(void){digit_request_job_t *job;HANDLE thread;char question[4096];GetWindowTextA(input_box,question,sizeof(question));if(!question[0]||!active_channel[0])return;if(strncmp(question,"/ack ",5)==0){if(chat_acknowledge(question))return;}if(strncmp(question,"/sa ",4)==0){if(chat_sa_command(question))return;}
+static void send_question(void){digit_request_job_t *job;HANDLE thread;char question[4096];GetWindowTextA(input_box,question,sizeof(question));if(!question[0])return;if(strncmp(question,"/ack ",5)==0){if(chat_acknowledge(question))return;}if(strncmp(question,"/sa ",4)==0){if(chat_sa_command(question))return;}if(!active_channel[0])return;
 job=(digit_request_job_t *)calloc(1,sizeof(*job));if(!job){append_output("Digit GUI","Unable to allocate request.");return;}strcpy_s(job->question,sizeof(job->question),question);strcpy_s(job->channel_id,sizeof(job->channel_id),active_channel);append_output("You",question);SetWindowTextA(input_box,"");SetWindowTextA(status_text,"Waiting for Digit...");EnableWindow(send_button,FALSE);thread=CreateThread(NULL,0,ask_worker,job,0,NULL);if(!thread){free(job);EnableWindow(send_button,TRUE);append_output("Digit GUI","Unable to start request thread.");return;}CloseHandle(thread);}
 static void create_channel(void){char name[128],response[2048];DWORD e,s;if(DialogBoxParamA(NULL,NULL,main_window,NULL,0))return;(void)name;(void)response;(void)e;(void)s;}
 static void prompt_new_channel(void){char name[128]="";if(GetWindowTextA(input_box,name,sizeof(name))<=0){MessageBoxA(main_window,"Type the new channel name in the input box, then click New Channel.",APP_TITLE,MB_OK|MB_ICONINFORMATION);return;}if(name[0]){char response[2048];DWORD e,s;if(digit_request("POST","/channels",name,response,sizeof(response),10000,&e,&s)){SetWindowTextA(input_box,"");load_channels();MessageBoxA(main_window,"Channel created. Channel visibility requires a separately authorized ACL assignment.",APP_TITLE,MB_OK|MB_ICONINFORMATION);}else {char msg[180];snprintf(msg,sizeof(msg),"Channel creation failed: HTTP %lu, WinHTTP %lu.",(unsigned long)s,(unsigned long)e);MessageBoxA(main_window,msg,APP_TITLE,MB_OK|MB_ICONERROR);}}}
