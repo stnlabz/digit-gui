@@ -58,6 +58,7 @@ static volatile LONG sync_busy=0;
 static unsigned int sync_generation=0;
 static char shown_channel[64]="";
 static unsigned long shown_hash=0;
+static unsigned long last_channel_list_hash=0;
 typedef struct {unsigned int generation;int channels_ok,messages_ok;char channel_id[64];char *channels_json,*messages_json;} digit_sync_result_t;
 typedef struct {unsigned int generation;char channel_id[64];} digit_sync_job_t;
 static void clear_session(void){SecureZeroMemory(session_token,sizeof(session_token));SecureZeroMemory(session_identity,sizeof(session_identity));session_authenticated=0;}
@@ -131,7 +132,7 @@ static void do_login(void){
     strcpy_s(session_identity,sizeof(session_identity),username);
     session_authenticated=1;
     ++sync_generation;
-    shown_channel[0]=0;
+    shown_channel[0]=0;last_channel_list_hash=0;
     SetTimer(main_window,ID_SYNC_TIMER,DIGIT_SYNC_INTERVAL_MS,NULL);
     SetWindowTextA(password_box,"");
     EnableWindow(login_button,FALSE);
@@ -142,7 +143,7 @@ static void do_login(void){
 static void do_logout(void){
     char response[256];DWORD error,status;
     if(session_authenticated)(void)digit_request("POST","/session/logout","",response,sizeof(response),10000,&error,&status);
-    KillTimer(main_window,ID_SYNC_TIMER);++sync_generation;shown_channel[0]=0;
+    KillTimer(main_window,ID_SYNC_TIMER);++sync_generation;shown_channel[0]=0;last_channel_list_hash=0;
     clear_session();set_access_controls(FALSE);EnableWindow(login_button,TRUE);
     SendMessageA(channel_list,LB_RESETCONTENT,0,0);SendMessageA(alerts_list,LB_RESETCONTENT,0,0);
     active_channel[0]=0;channel_count=0;alert_count=0;
@@ -228,8 +229,7 @@ static void apply_sync(digit_sync_result_t *result){
     if(result->generation==sync_generation&&session_authenticated){
         if(result->channels_ok){
             unsigned long current=sync_hash(result->channels_json);
-            static unsigned long last_list_hash=0;
-            if(current!=last_list_hash){
+            if(current!=last_channel_list_hash){
                 char id[64],name[128];
                 const char *p=result->channels_json;
                 size_t count=0,selection=(size_t)-1;
@@ -251,7 +251,7 @@ static void apply_sync(digit_sync_result_t *result){
                     if(count){selection=0;strcpy_s(active_channel,sizeof(active_channel),channels[0].id);}
                 }
                 if(selection!=(size_t)-1)SendMessageA(channel_list,LB_SETCURSEL,selection,0);
-                last_list_hash=current;
+                last_channel_list_hash=current;
             }
         }
         if(result->messages_ok&&strcmp(result->channel_id,active_channel)==0){
