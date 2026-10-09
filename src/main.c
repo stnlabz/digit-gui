@@ -88,9 +88,22 @@ static void do_login(void){
     clear_session();
     {int ok=digit_request("POST","/session/login",body,response,sizeof(response),10000,&error,&status);
      SecureZeroMemory(body,sizeof(body));
-     if(!ok||!json_string_after(response,"token",token,sizeof(token))||strlen(token)!=64){
+     if(!ok){
+         char diagnostic[160];
+         if(status!=0)
+             snprintf(diagnostic,sizeof(diagnostic),"Login rejected: HTTP %lu",(unsigned long)status);
+         else
+             snprintf(diagnostic,sizeof(diagnostic),"HTTPS request failed: WinHTTP %lu",(unsigned long)error);
          SecureZeroMemory(token,sizeof(token));
-         SetWindowTextA(status_text,"Authentication failed");return;
+         SetWindowTextA(status_text,diagnostic);
+         MessageBoxA(main_window,diagnostic,APP_TITLE,MB_OK|MB_ICONWARNING);
+         return;
+     }
+     if(!json_string_after(response,"token",token,sizeof(token))||strlen(token)!=64){
+         SecureZeroMemory(token,sizeof(token));
+         SetWindowTextA(status_text,"Login HTTP 200 but session token invalid");
+         MessageBoxA(main_window,"Login succeeded but GUI could not parse the session token.",APP_TITLE,MB_OK|MB_ICONWARNING);
+         return;
      }}
     strcpy_s(session_token,sizeof(session_token),token);
     SecureZeroMemory(token,sizeof(token));
