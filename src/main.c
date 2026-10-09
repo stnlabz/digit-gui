@@ -293,6 +293,13 @@ static void channel_navigation(const char *json){
     if(strcmp(channels[k].organization,org)||strcmp(channels[k].project,proj))continue;
     label=strncmp(channels[k].name,"security-",9)==0?"Security":
           strncmp(channels[k].name,"alerts-",7)==0?"Alerts":channels[k].name;
+    if(proj[0]&&org[0]){
+     char prefix[160];size_t prefix_len;
+     snprintf(prefix,sizeof(prefix),"channel-%s-%s-",org,proj);
+     prefix_len=strlen(prefix);
+     if(!strncmp(channels[k].name,prefix,prefix_len)&&channels[k].name[prefix_len])
+      label=channels[k].name+prefix_len;
+    }
     snprintf(display,sizeof(display),"%s%s",proj[0]?"      ":"   ",label);
     row=SendMessageA(channel_list,LB_ADDSTRING,0,(LPARAM)display);
     if(row==LB_ERR||row==LB_ERRSPACE)continue;
