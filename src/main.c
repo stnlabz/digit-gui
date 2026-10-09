@@ -17,6 +17,11 @@
 #define ID_ALERTS 1007
 #define ID_ACK_ALERT 1008
 #define ID_REFRESH 1009
+#define ID_LOGIN 1010
+#define ID_LOGOUT 1011
+#define ID_SA_CHECK 1012
+#define ID_USERNAME 1013
+#define ID_PASSWORD 1014
 #define BUFFER_MAX 65536
 #define CHANNEL_MAX 128
 #define ALERT_MAX 256
@@ -29,12 +34,20 @@ typedef struct{char id[64];char severity[16];char summary[256];int acknowledged;
 typedef struct{int ok;DWORD error;DWORD http_status;char answer[4096];char channel_id[64];} digit_result_t;
 typedef struct{char question[4096];char channel_id[64];} digit_request_job_t;
 
-static HWND main_window,channel_list,output_box,input_box,send_button,status_text,new_channel_button,alerts_list,ack_button,refresh_button;
+static HWND main_window,channel_list,output_box,input_box,send_button,status_text,new_channel_button,alerts_list,ack_button,refresh_button,username_box,password_box,login_button,logout_button,sa_button;
 static char digit_host[256]="127.0.0.1";
 static INTERNET_PORT digit_port=8081;
 static channel_item_t channels[CHANNEL_MAX];static size_t channel_count=0;
 static alert_item_t alerts[ALERT_MAX];static size_t alert_count=0;
 static char active_channel[64]="general";
+/* [AI:GPT-6 | 2026-10-08] Digit GUI 1.5.4: in-process bearer only.
+ * No password or session token is written to configuration or disk. */
+static char session_token[129];
+static char session_identity[64];
+static int session_authenticated=0;
+static void clear_session(void){SecureZeroMemory(session_token,sizeof(session_token));SecureZeroMemory(session_identity,sizeof(session_identity));session_authenticated=0;}
+static void set_access_controls(int enabled){EnableWindow(channel_list,enabled);EnableWindow(output_box,enabled);EnableWindow(input_box,enabled);EnableWindow(send_button,enabled);EnableWindow(new_channel_button,enabled);EnableWindow(alerts_list,enabled);EnableWindow(ack_button,enabled);EnableWindow(refresh_button,enabled);EnableWindow(logout_button,enabled);EnableWindow(sa_button,enabled);}
+
 
 static void trim_line(char *text){size_t n;if(!text)return;n=strlen(text);while(n>0&&(text[n-1]=='\r'||text[n-1]=='\n'||text[n-1]==' '||text[n-1]=='\t'))text[--n]=0;}
 static int config_path(char *path,size_t path_size){DWORD n=GetModuleFileNameA(NULL,path,(DWORD)path_size);char *slash;if(n==0||n>=path_size)return 0;slash=strrchr(path,'\\');if(!slash)return 0;slash[1]=0;if(strlen(path)+strlen("digit.conf")+1>path_size)return 0;strcat_s(path,path_size,"digit.conf");return 1;}
@@ -42,7 +55,67 @@ static int load_config(void){FILE *stream;char path[MAX_PATH],line[512];int have
 static void append_output(const char *speaker,const char *text){char line[8192];WCHAR wide[8192];int length;snprintf(line,sizeof(line),"%s: %s\r\n\r\n",speaker,text);if(!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,line,-1,wide,(int)(sizeof(wide)/sizeof(wide[0]))))return;length=GetWindowTextLengthW(output_box);SendMessageW(output_box,EM_SETSEL,(WPARAM)length,(LPARAM)length);SendMessageW(output_box,EM_REPLACESEL,FALSE,(LPARAM)wide);}
 static int json_string_after(const char *start,const char *key,char *out,size_t n){char pattern[128];const char *p;size_t o=0;snprintf(pattern,sizeof(pattern),"\"%s\":\"",key);p=strstr(start,pattern);if(!p)return 0;p+=strlen(pattern);while(*p&&o+1<n){if(*p=='"')break;if(*p=='\\'&&p[1]){++p;if(*p=='n')out[o++]='\n';else if(*p=='t')out[o++]='\t';else if(*p!='r')out[o++]=*p;++p;continue;}out[o++]=*p++;}out[o]=0;return *p=='"';}
 static int extract_answer(const char *json,char *answer,size_t n){return json_string_after(json,"answer",answer,n);}
-static int digit_request(const char *method,const char *path,const char *body,char *response,size_t response_size,DWORD receive_timeout,DWORD *error_out,DWORD *status_out){WCHAR host_w[256],path_w[512],method_w[16];HINTERNET session=NULL,connection=NULL,request=NULL;DWORD status=0,status_size=sizeof(status),available=0,read=0;size_t used=0;int ok=0;DWORD error=ERROR_SUCCESS;if(error_out)*error_out=0;if(status_out)*status_out=0;if(!MultiByteToWideChar(CP_UTF8,0,digit_host,-1,host_w,256)||!MultiByteToWideChar(CP_UTF8,0,path,-1,path_w,512)||!MultiByteToWideChar(CP_UTF8,0,method,-1,method_w,16)){error=GetLastError();goto done;}session=WinHttpOpen(L"Digit GUI/0.4",WINHTTP_ACCESS_TYPE_NO_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);if(!session){error=GetLastError();goto done;}if(!WinHttpSetTimeouts(session,5000,5000,10000,(int)receive_timeout)){error=GetLastError();goto done;}connection=WinHttpConnect(session,host_w,digit_port,0);if(!connection){error=GetLastError();goto done;}request=WinHttpOpenRequest(connection,method_w,path_w,NULL,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,0);if(!request){error=GetLastError();goto done;}if(!WinHttpSendRequest(request,body?L"Content-Type: text/plain\r\n":WINHTTP_NO_ADDITIONAL_HEADERS,body?(DWORD)-1L:0,body?(LPVOID)body:WINHTTP_NO_REQUEST_DATA,body?(DWORD)strlen(body):0,body?(DWORD)strlen(body):0,0)){error=GetLastError();goto done;}if(!WinHttpReceiveResponse(request,NULL)){error=GetLastError();goto done;}if(!WinHttpQueryHeaders(request,WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,WINHTTP_HEADER_NAME_BY_INDEX,&status,&status_size,WINHTTP_NO_HEADER_INDEX)){error=GetLastError();goto done;}if(status_out)*status_out=status;if(status!=200)goto done;response[0]=0;do{if(!WinHttpQueryDataAvailable(request,&available)){error=GetLastError();goto done;}if(!available)break;if(available>response_size-used-1)available=(DWORD)(response_size-used-1);if(!available){error=ERROR_INSUFFICIENT_BUFFER;goto done;}if(!WinHttpReadData(request,response+used,available,&read)){error=GetLastError();goto done;}used+=read;response[used]=0;}while(read>0);ok=1;done:if(error_out)*error_out=error;if(request)WinHttpCloseHandle(request);if(connection)WinHttpCloseHandle(connection);if(session)WinHttpCloseHandle(session);return ok;}
+static int digit_request(const char *method,const char *path,const char *body,char *response,size_t response_size,DWORD receive_timeout,DWORD *error_out,DWORD *status_out){WCHAR host_w[256],path_w[512],method_w[16];HINTERNET session=NULL,connection=NULL,request=NULL;DWORD status=0,status_size=sizeof(status),available=0,read=0;size_t used=0;int ok=0;DWORD error=ERROR_SUCCESS;if(error_out)*error_out=0;if(status_out)*status_out=0;if(!MultiByteToWideChar(CP_UTF8,0,digit_host,-1,host_w,256)||!MultiByteToWideChar(CP_UTF8,0,path,-1,path_w,512)||!MultiByteToWideChar(CP_UTF8,0,method,-1,method_w,16)){error=GetLastError();goto done;}session=WinHttpOpen(L"Digit GUI/0.4",WINHTTP_ACCESS_TYPE_NO_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);if(!session){error=GetLastError();goto done;}if(!WinHttpSetTimeouts(session,5000,5000,10000,(int)receive_timeout)){error=GetLastError();goto done;}connection=WinHttpConnect(session,host_w,digit_port,0);if(!connection){error=GetLastError();goto done;}request=WinHttpOpenRequest(connection,method_w,path_w,NULL,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,0);if(!request){error=GetLastError();goto done;}/* [AI:GPT-6 | 2026-10-08] Attach bearer only for authenticated API calls;
+ * login never transmits a previous token. */
+if(session_authenticated && strcmp(path,"/session/login")!=0){
+    WCHAR auth_header[240];
+    if(swprintf_s(auth_header,sizeof(auth_header)/sizeof(auth_header[0]),L"Authorization: Bearer %hs\\r\\n",session_token)<0 ||
+       !WinHttpAddRequestHeaders(request,auth_header,(DWORD)-1L,WINHTTP_ADDREQ_FLAG_ADD)){
+        error=GetLastError();goto done;
+    }
+}
+if(!WinHttpSendRequest(request,body?L"Content-Type: text/plain\r\n":WINHTTP_NO_ADDITIONAL_HEADERS,body?(DWORD)-1L:0,body?(LPVOID)body:WINHTTP_NO_REQUEST_DATA,body?(DWORD)strlen(body):0,body?(DWORD)strlen(body):0,0)){error=GetLastError();goto done;}if(!WinHttpReceiveResponse(request,NULL)){error=GetLastError();goto done;}if(!WinHttpQueryHeaders(request,WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,WINHTTP_HEADER_NAME_BY_INDEX,&status,&status_size,WINHTTP_NO_HEADER_INDEX)){error=GetLastError();goto done;}if(status_out)*status_out=status;if(status!=200)goto done;response[0]=0;do{if(!WinHttpQueryDataAvailable(request,&available)){error=GetLastError();goto done;}if(!available)break;if(available>response_size-used-1)available=(DWORD)(response_size-used-1);if(!available){error=ERROR_INSUFFICIENT_BUFFER;goto done;}if(!WinHttpReadData(request,response+used,available,&read)){error=GetLastError();goto done;}used+=read;response[used]=0;}while(read>0);ok=1;done:if(error_out)*error_out=error;if(request)WinHttpCloseHandle(request);if(connection)WinHttpCloseHandle(connection);if(session)WinHttpCloseHandle(session);return ok;}
+static void refresh_all(void);
+/* [AI:GPT-6 | 2026-10-08] Console GUI remains loopback-only while
+ * authenticated remote HTTPS transport is not available in Interface. */
+static int local_transport(void){return strcmp(digit_host,"127.0.0.1")==0 || strcmp(digit_host,"localhost")==0;}
+static void do_login(void){
+    char username[64],password[256],body[384],response[1024],token[129];
+    DWORD error=0,status=0;
+    if(!local_transport()){
+        MessageBoxA(main_window,"Authenticated Digit Interface is loopback-only. Use a local connection until a qualified HTTPS gateway is available.",APP_TITLE,MB_OK|MB_ICONWARNING);
+        return;
+    }
+    if(GetWindowTextA(username_box,username,sizeof(username))<=0 || GetWindowTextA(password_box,password,sizeof(password))<=0){
+        MessageBoxA(main_window,"Enter an account identity and password.",APP_TITLE,MB_OK|MB_ICONINFORMATION);return;
+    }
+    if(strchr(username,'\\t')||strchr(username,'\\r')||strchr(username,'\\n')||strchr(password,'\\t')||strchr(password,'\\r')||strchr(password,'\\n')){
+        SecureZeroMemory(password,sizeof(password));return;
+    }
+    snprintf(body,sizeof(body),"%s\\t%s",username,password);
+    SecureZeroMemory(password,sizeof(password));
+    clear_session();
+    {int ok=digit_request("POST","/session/login",body,response,sizeof(response),10000,&error,&status);
+     SecureZeroMemory(body,sizeof(body));
+     if(!ok||!json_string_after(response,"token",token,sizeof(token))||strlen(token)!=64){
+         SecureZeroMemory(token,sizeof(token));
+         SetWindowTextA(status_text,"Authentication failed");return;
+     }}
+    strcpy_s(session_token,sizeof(session_token),token);
+    SecureZeroMemory(token,sizeof(token));
+    strcpy_s(session_identity,sizeof(session_identity),username);
+    session_authenticated=1;
+    SetWindowTextA(password_box,"");
+    EnableWindow(login_button,FALSE);
+    set_access_controls(TRUE);
+    SetWindowTextA(status_text,"Authenticated with Digit");
+    refresh_all();
+}
+static void do_logout(void){
+    char response[256];DWORD error,status;
+    if(session_authenticated)(void)digit_request("POST","/session/logout","",response,sizeof(response),10000,&error,&status);
+    clear_session();set_access_controls(FALSE);EnableWindow(login_button,TRUE);
+    SendMessageA(channel_list,LB_RESETCONTENT,0,0);SendMessageA(alerts_list,LB_RESETCONTENT,0,0);
+    SetWindowTextW(output_box,L"");SetWindowTextA(status_text,"Signed out");
+}
+static void check_sa(void){
+    char response[512];DWORD error=0,status=0;
+    if(!session_authenticated)return;
+    if(digit_request("GET","/admin/access",NULL,response,sizeof(response),10000,&error,&status) &&
+       strstr(response,"\\\"authorized\\\":true") && strstr(response,"digit-operations-read"))
+        MessageBoxA(main_window,"Digit Core confirms SA read-access eligibility. Operational dashboard data is not exposed by Interface 1.5.4 yet.",APP_TITLE,MB_OK|MB_ICONINFORMATION);
+    else MessageBoxA(main_window,"Digit Core did not authorize SA access.",APP_TITLE,MB_OK|MB_ICONWARNING);
+}
 static void check_health(void){char response[1024];DWORD e,s;if(digit_request("GET","/health",NULL,response,sizeof(response),10000,&e,&s)&&strstr(response,"READY"))SetWindowTextA(status_text,"Connected");else SetWindowTextA(status_text,"Offline");}
 static void load_channels(void){char response[BUFFER_MAX],name[128],id[64];DWORD e,s;const char *p;size_t count=0;SendMessageA(channel_list,LB_RESETCONTENT,0,0);if(!digit_request("GET","/channels",NULL,response,sizeof(response),10000,&e,&s))return;p=response;while(count<CHANNEL_MAX&&(p=strstr(p,"\"id\":\""))!=NULL){if(!json_string_after(p,"id",id,sizeof(id))||!json_string_after(p,"name",name,sizeof(name)))break;strcpy_s(channels[count].id,sizeof(channels[count].id),id);strcpy_s(channels[count].name,sizeof(channels[count].name),name);SendMessageA(channel_list,LB_ADDSTRING,0,(LPARAM)name);if(strcmp(id,active_channel)==0)SendMessageA(channel_list,LB_SETCURSEL,(WPARAM)count,0);++count;p+=6;}channel_count=count;if(SendMessageA(channel_list,LB_GETCURSEL,0,0)==LB_ERR&&count){SendMessageA(channel_list,LB_SETCURSEL,0,0);strcpy_s(active_channel,sizeof(active_channel),channels[0].id);}}
 static void load_history(void){char path[256],response[BUFFER_MAX],origin[64],body[4096];DWORD e,s;const char *p;if(!active_channel[0])return;snprintf(path,sizeof(path),"/channels/%s/messages",active_channel);SetWindowTextW(output_box,L"");if(!digit_request("GET",path,NULL,response,sizeof(response),10000,&e,&s))return;p=response;while((p=strstr(p,"\"origin\":\""))!=NULL){if(!json_string_after(p,"origin",origin,sizeof(origin))||!json_string_after(p,"body",body,sizeof(body)))break;append_output(strcmp(origin,"digit")==0?"Digit":strcmp(origin,"operator")==0?"You":origin,body);p+=10;}}
