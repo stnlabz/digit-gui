@@ -318,9 +318,9 @@ static int chat_sa_command(const char *text){
        user,(unsigned)sizeof(user));
     if(count<2||count>3||
        (!strcmp(command,"list")&&count!=2)||
-       ((!strcmp(command,"assign")||!strcmp(command,"revoke"))&&count!=3)||
-       (strcmp(command,"list")&&strcmp(command,"assign")&&strcmp(command,"revoke"))){
-        append_output("Digit GUI","Usage: /sa list org | /sa assign org user | /sa revoke org user");
+       ((!strcmp(command,"assign")||!strcmp(command,"revoke")||!strcmp(command,"bootstrap"))&&count!=3)||
+       (strcmp(command,"list")&&strcmp(command,"assign")&&strcmp(command,"revoke")&&strcmp(command,"bootstrap"))){
+        append_output("Digit GUI","Usage: /sa list org | /sa assign org user | /sa revoke org user | /sa bootstrap team-chaos poemei");
         return 1;
     }
     {
