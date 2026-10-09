@@ -33,6 +33,8 @@
 #define ID_SA_REVOKE 1022
 #define ID_SA_ROSTER 1023
 #define ID_PROJECT_MEMBERS 1024
+#define ID_MEMBER_REFRESH 1025
+#define ID_MEMBER_LIST 1026
 #define BUFFER_MAX 65536
 #define CHANNEL_MAX 128
 #define ALERT_MAX 256
@@ -56,6 +58,8 @@ static HFONT ui_font;
 #define DIGIT_MUTED RGB(173,190,213)
 static HWND main_window,channel_list,output_box,input_box,send_button,status_text,new_channel_button,alerts_list,ack_button,refresh_button,username_box,password_box,login_button,logout_button,sa_button,new_project_button,bind_security_button,list_projects_button,security_grant_button,users_button;
 static HWND users_window,users_org_edit,users_target_edit,users_roster,users_feedback;
+static HWND member_window,member_list,member_detail,member_heading;
+static char member_org[64],member_project[64];
 static char digit_host[256]="127.0.0.1";
 static INTERNET_PORT digit_port=8081;
 static channel_item_t channels[CHANNEL_MAX];static size_t channel_count=0;
@@ -180,6 +184,7 @@ static void do_logout(void){
     if(session_authenticated)(void)digit_request("POST","/session/logout","",response,sizeof(response),10000,&error,&status);
     KillTimer(main_window,ID_SYNC_TIMER);++sync_generation;shown_channel[0]=0;last_channel_list_hash=0;
     clear_session();set_access_controls(FALSE);EnableWindow(login_button,TRUE);
+    if(member_window)DestroyWindow(member_window);
     if(users_window)DestroyWindow(users_window);
     SendMessageA(channel_list,LB_RESETCONTENT,0,0);SendMessageA(alerts_list,LB_RESETCONTENT,0,0);
     active_channel[0]=0;selected_org[0]=0;selected_project[0]=0;channel_count=0;alert_count=0;
@@ -655,41 +660,109 @@ static void sa_panel_request(const char *command){
 }
 /* [AI:GPT-6 | 2026-10-09] Verified restricted project roster;
  * no account or organization membership is inferred from this view. */
+/* [AI:GPT-6 | 2026-10-09] Native project-member directory.
+ * Scope and membership originate exclusively from the qualified server.
+ * The view never grants permissions or fabricates account status. */
+static void project_members_refresh(void){
+ char body[160],reply[16384]={0},line[256],user[64],membership[64];
+ const char *cursor,*end;DWORD error=0,status=0;unsigned int count=0;
+ if(!session_authenticated||!member_window)return;
+ snprintf(body,sizeof(body),"%s\t%s",member_org,member_project);
+ if(!digit_request("POST","/admin/project-members",body,reply,sizeof(reply),10000,&error,&status)){
+  snprintf(line,sizeof(line),"Directory unavailable (HTTP %lu, network %lu).",
+    (unsigned long)status,(unsigned long)error);
+  SetWindowTextA(member_detail,line);
+  SendMessageA(member_list,LB_RESETCONTENT,0,0);
+  return;
+ }
+ cursor=strstr(reply,"\"members\":[");
+ if(!cursor){SetWindowTextA(member_detail,"Invalid member directory response.");return;}
+ cursor=strchr(cursor,'[')+1;
+ SendMessageA(member_list,LB_RESETCONTENT,0,0);
+ while((cursor=strstr(cursor,"\"user\":\""))!=NULL){
+  char record[512];size_t n;
+  end=strchr(cursor,'}');if(!end)break;
+  n=(size_t)(end-cursor);if(n>=sizeof(record))break;
+  memcpy(record,cursor,n);record[n]=0;
+  if(!json_string_after(record,"user",user,sizeof(user))||
+     !json_string_after(record,"membership",membership,sizeof(membership)))break;
+  if(strcmp(membership,"restricted"))break;
+  snprintf(line,sizeof(line),"%-30.30s   Restricted project member",user);
+  SendMessageA(member_list,LB_ADDSTRING,0,(LPARAM)line);
+  count++;cursor=end+1;
+ }
+ snprintf(line,sizeof(line),"%u verified restricted project member(s). Select a row for details.",count);
+ SetWindowTextA(member_detail,line);
+}
+static LRESULT CALLBACK project_members_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp){
+ switch(message){
+ case WM_COMMAND:
+  if(LOWORD(wp)==ID_MEMBER_REFRESH){project_members_refresh();return 0;}
+  if(LOWORD(wp)==ID_MEMBER_LIST&&HIWORD(wp)==LBN_SELCHANGE){
+   char row[256],user[64],detail[320];LRESULT index;
+   index=SendMessageA(member_list,LB_GETCURSEL,0,0);
+   if(index!=LB_ERR&&SendMessageA(member_list,LB_GETTEXT,(WPARAM)index,(LPARAM)row)!=LB_ERR&&
+      sscanf_s(row,"%63s",user,(unsigned)sizeof(user))==1){
+    snprintf(detail,sizeof(detail),
+      "Identity: %s\r\nOrganization: %s\r\nProject: %s\r\nMembership: restricted",
+      user,member_org,member_project);
+    SetWindowTextA(member_detail,detail);
+   }
+   return 0;
+  }
+  break;
+ case WM_CLOSE:DestroyWindow(hwnd);return 0;
+ case WM_DESTROY:
+  member_window=NULL;member_list=NULL;member_detail=NULL;member_heading=NULL;return 0;
+ case WM_CTLCOLORSTATIC:
+ case WM_CTLCOLORLISTBOX:{
+  HDC dc=(HDC)wp;
+  SetTextColor(dc,DIGIT_TEXT);SetBkColor(dc,
+    message==WM_CTLCOLORSTATIC?DIGIT_BG:DIGIT_SURFACE);
+  return (LRESULT)(message==WM_CTLCOLORSTATIC?surface_brush:input_brush);
+ }
+ }
+ return DefWindowProcA(hwnd,message,wp,lp);
+}
 static void project_members_open(void){
- char body[160],reply[16384]={0},report[8192],user[64],title[160];
- const char *cursor;size_t used=0,count=0;
- DWORD error=0,status=0;
+ static int registered=0;
+ WNDCLASSA wc={0};HWND refresh;HFONT font=ui_font;char title[200];
  if(!session_authenticated||!selected_org[0]||!selected_project[0]){
-  MessageBoxA(main_window,"Select a project under an organization first.",
+  MessageBoxA(users_window?users_window:main_window,
+    "Select an existing organization project in the sidebar first.",
     APP_TITLE,MB_OK|MB_ICONINFORMATION);return;
  }
- snprintf(body,sizeof(body),"%s\t%s",selected_org,selected_project);
- if(!digit_request("POST","/admin/project-members",body,reply,
-      sizeof(reply),10000,&error,&status)){
-  char diagnostic[350];
-  snprintf(diagnostic,sizeof(diagnostic),
-   "Project member directory unavailable (HTTP %lu, network %lu).\n%.180s",
-    (unsigned long)status,(unsigned long)error,reply);
-  MessageBoxA(main_window,diagnostic,APP_TITLE,MB_OK|MB_ICONWARNING);return;
+ if(member_window)DestroyWindow(member_window);
+ strcpy_s(member_org,sizeof(member_org),selected_org);
+ strcpy_s(member_project,sizeof(member_project),selected_project);
+ if(!registered){
+  wc.lpfnWndProc=project_members_proc;wc.hInstance=GetModuleHandleA(NULL);
+  wc.lpszClassName="DigitProjectMembersWindow";wc.hbrBackground=surface_brush;
+  wc.hCursor=LoadCursor(NULL,IDC_ARROW);
+  if(!RegisterClassA(&wc))return;
+  registered=1;
  }
- if(!strstr(reply,"\"members\":[")){
-  MessageBoxA(main_window,"Invalid project member directory response.",
-    APP_TITLE,MB_OK|MB_ICONWARNING);return;
- }
- used=(size_t)snprintf(report,sizeof(report),
-  "Verified restricted project members\nOrganization: %s\nProject: %s\n\n",
-  selected_org,selected_project);
- cursor=strstr(reply,"\"members\":[")+11;
- while((cursor=strstr(cursor,"\"user\":\""))!=NULL){
-  int n;const char *end=strchr(cursor,'}');
-  if(!end||!json_string_after(cursor,"user",user,sizeof(user)))break;
-  n=snprintf(report+used,sizeof(report)-used,"%s\n",user);
-  if(n<0||(size_t)n>=sizeof(report)-used)break;
-  used+=(size_t)n;count++;cursor=end+1;
- }
- if(!count)strcat_s(report,sizeof(report),"No restricted project members returned.");
- snprintf(title,sizeof(title),"Project members - %s / %s",selected_org,selected_project);
- MessageBoxA(users_window?users_window:main_window,report,title,MB_OK|MB_ICONINFORMATION);
+ snprintf(title,sizeof(title),"Digit - Project Members: %s / %s",member_org,member_project);
+ member_window=CreateWindowExA(WS_EX_TOOLWINDOW,"DigitProjectMembersWindow",title,
+  WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,
+  CW_USEDEFAULT,CW_USEDEFAULT,660,475,
+  main_window,NULL,GetModuleHandleA(NULL),NULL);
+ if(!member_window)return;
+ member_heading=CreateWindowA("STATIC","Identity                               Membership",
+  WS_CHILD|WS_VISIBLE,16,18,440,24,member_window,NULL,NULL,NULL);
+ refresh=CreateWindowA("BUTTON","Refresh",WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+  514,12,112,30,member_window,(HMENU)ID_MEMBER_REFRESH,NULL,NULL);
+ member_list=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",
+  WS_CHILD|WS_VISIBLE|WS_VSCROLL|LBS_NOTIFY|WS_TABSTOP,
+  16,52,610,275,member_window,(HMENU)ID_MEMBER_LIST,NULL,NULL);
+ member_detail=CreateWindowA("STATIC","Retrieving verified membership...",
+  WS_CHILD|WS_VISIBLE,16,342,610,75,member_window,NULL,NULL,NULL);
+ SendMessageA(member_heading,WM_SETFONT,(WPARAM)font,TRUE);
+ SendMessageA(refresh,WM_SETFONT,(WPARAM)font,TRUE);
+ SendMessageA(member_list,WM_SETFONT,(WPARAM)font,TRUE);
+ SendMessageA(member_detail,WM_SETFONT,(WPARAM)font,TRUE);
+ ShowWindow(member_window,SW_SHOW);
+ project_members_refresh();
 }
 static LRESULT CALLBACK sa_panel_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp){
  switch(message){
@@ -710,6 +783,7 @@ static LRESULT CALLBACK sa_panel_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp
   }break;
  case WM_CLOSE:DestroyWindow(hwnd);return 0;
  case WM_DESTROY:
+  if(member_window)DestroyWindow(member_window);
   users_window=NULL;users_org_edit=NULL;users_target_edit=NULL;
   users_roster=NULL;users_feedback=NULL;return 0;
  case WM_CTLCOLORSTATIC:
