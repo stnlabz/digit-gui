@@ -126,8 +126,8 @@ static void check_sa(void){
     char response[512];DWORD error=0,status=0;
     if(!session_authenticated)return;
     if(digit_request("GET","/admin/access",NULL,response,sizeof(response),10000,&error,&status) &&
-       strstr(response,"\\\"authorized\\\":true") && strstr(response,"digit-operations-read"))
-        MessageBoxA(main_window,"Digit Core confirms SA read-access eligibility. Operational dashboard data is not exposed by Interface 1.5.4 yet.",APP_TITLE,MB_OK|MB_ICONINFORMATION);
+       strstr(response,"\"authorized\":true") && strstr(response,"digit-operations-read"))
+        MessageBoxA(main_window,"Digit Core confirms SA read-access eligibility. Operational dashboard data is not yet exposed by Interface 1.5.5.",APP_TITLE,MB_OK|MB_ICONINFORMATION);
     else MessageBoxA(main_window,"Digit Core did not authorize SA access.",APP_TITLE,MB_OK|MB_ICONWARNING);
 }
 static void check_health(void){char response[1024];DWORD e,s;if(digit_request("GET","/health",NULL,response,sizeof(response),10000,&e,&s)&&strstr(response,"READY"))SetWindowTextA(status_text,"Connected");else SetWindowTextA(status_text,"Offline");}
