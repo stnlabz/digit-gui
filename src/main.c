@@ -60,7 +60,7 @@ static int digit_request(const char *method,const char *path,const char *body,ch
  * login never transmits a previous token. */
 if(session_authenticated && strcmp(path,"/session/login")!=0){
     WCHAR auth_header[240];
-    if(swprintf_s(auth_header,sizeof(auth_header)/sizeof(auth_header[0]),L"Authorization: Bearer %hs\\r\\n",session_token)<0 ||
+    if(swprintf_s(auth_header,sizeof(auth_header)/sizeof(auth_header[0]),L"Authorization: Bearer %hs\r\n",session_token)<0 ||
        !WinHttpAddRequestHeaders(request,auth_header,(DWORD)-1L,WINHTTP_ADDREQ_FLAG_ADD)){
         error=GetLastError();goto done;
     }
@@ -80,10 +80,10 @@ static void do_login(void){
     if(GetWindowTextA(username_box,username,sizeof(username))<=0 || GetWindowTextA(password_box,password,sizeof(password))<=0){
         MessageBoxA(main_window,"Enter an account identity and password.",APP_TITLE,MB_OK|MB_ICONINFORMATION);return;
     }
-    if(strchr(username,'\\t')||strchr(username,'\\r')||strchr(username,'\\n')||strchr(password,'\\t')||strchr(password,'\\r')||strchr(password,'\\n')){
+    if(strchr(username,'\t')||strchr(username,'\r')||strchr(username,'\n')||strchr(password,'\t')||strchr(password,'\r')||strchr(password,'\n')){
         SecureZeroMemory(password,sizeof(password));return;
     }
-    snprintf(body,sizeof(body),"%s\\t%s",username,password);
+    snprintf(body,sizeof(body),"%s\t%s",username,password);
     SecureZeroMemory(password,sizeof(password));
     clear_session();
     {int ok=digit_request("POST","/session/login",body,response,sizeof(response),10000,&error,&status);
