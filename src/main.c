@@ -144,7 +144,7 @@ static void check_sa(void){
        sscanf(strstr(response,"\"unacknowledged_alerts\":")?strstr(response,"\"unacknowledged_alerts\":"):"", "\"unacknowledged_alerts\":%lu",&unacknowledged)!=1){
         MessageBoxA(main_window,"Invalid dashboard response.",APP_TITLE,MB_OK|MB_ICONWARNING);return;
     }
-    snprintf(dialog,sizeof(dialog),"Digit SA Operational Dashboard (read-only)\\n\\nChannels: %lu\\nAlerts: %lu\\nUnacknowledged alerts: %lu",channels,alerts,unacknowledged);
+    snprintf(dialog,sizeof(dialog),"Digit SA Operational Dashboard (read-only)\n\nChannels: %lu\nAlerts: %lu\nUnacknowledged alerts: %lu",channels,alerts,unacknowledged);
     MessageBoxA(main_window,dialog,APP_TITLE,MB_OK|MB_ICONINFORMATION);
 }
 static void check_health(void){char response[1024];DWORD e,s;if(digit_request("GET","/health",NULL,response,sizeof(response),10000,&e,&s)&&strstr(response,"READY"))SetWindowTextA(status_text,"Connected");else SetWindowTextA(status_text,"Offline");}
