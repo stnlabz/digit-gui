@@ -326,7 +326,8 @@ static void channel_navigation(const char *json){
      if(!strncmp(channels[k].name,prefix,prefix_len)&&channels[k].name[prefix_len])
       label=channels[k].name+prefix_len;
     }
-    snprintf(display,sizeof(display),"%s%s",proj[0]?"      ":"   ",label);
+    /* [AI:GPT-6 | 2026-10-09] Channel prefix is presentation only. */
+    snprintf(display,sizeof(display),"%s#%s",proj[0]?"      ":"   ",label[0]=='#'?label+1:label);
     row=SendMessageA(channel_list,LB_ADDSTRING,0,(LPARAM)display);
     if(row==LB_ERR||row==LB_ERRSPACE)continue;
     SendMessageA(channel_list,LB_SETITEMDATA,(WPARAM)row,(LPARAM)k);
