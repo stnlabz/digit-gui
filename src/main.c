@@ -261,6 +261,31 @@ static void channel_navigation(const char *json){
    }
   }
  }
+ /* Show independently authorized organizations even with no bound channels. */
+ {
+  const char *start=strstr(json,"\"organizations\":[");
+  if(start){
+   const char *end=strchr(start,']');
+   const char *orgs[2]={"stn-labz","team-chaos"};
+   size_t oi;
+   for(oi=0;oi<2;oi++){
+    char token[80];int shown=0;
+    snprintf(token,sizeof(token),"\"%s\"",orgs[oi]);
+    if(!end||!strstr(start,token)||strstr(start,token)>end)continue;
+    for(i=0;i<count;i++)if(strcmp(channels[i].organization,orgs[oi])==0){shown=1;break;}
+    if(!shown){
+     LRESULT row=SendMessageA(channel_list,LB_ADDSTRING,0,
+                              (LPARAM)(oi==0?"STN-LABZ":"Team ChAoS"));
+     if(row!=LB_ERR&&row!=LB_ERRSPACE){
+      SendMessageA(channel_list,LB_SETITEMDATA,(WPARAM)row,(LPARAM)-1);
+      row=SendMessageA(channel_list,LB_ADDSTRING,0,(LPARAM)"   No channels provisioned");
+      if(row!=LB_ERR&&row!=LB_ERRSPACE)
+       SendMessageA(channel_list,LB_SETITEMDATA,(WPARAM)row,(LPARAM)-1);
+     }
+    }
+   }
+  }
+ }
  if(selection==(size_t)-1){
   active_channel[0]=0;
   for(i=0;i<(size_t)SendMessageA(channel_list,LB_GETCOUNT,0,0);i++){
