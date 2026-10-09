@@ -59,6 +59,7 @@ static HFONT ui_font;
 static HWND main_window,channel_list,output_box,input_box,send_button,status_text,new_channel_button,alerts_list,ack_button,refresh_button,username_box,password_box,login_button,logout_button,sa_button,new_project_button,bind_security_button,list_projects_button,security_grant_button,users_button;
 static HWND users_window,users_org_edit,users_target_edit,users_roster,users_feedback;
 static HWND member_window,member_list,member_detail,member_heading;
+static HWND main_users_list,main_users_heading;
 static char member_org[64],member_project[64];
 static struct {char user[64];int account_active,sa_authorized;} member_rows[128];
 static size_t member_row_count=0;
@@ -90,7 +91,7 @@ ShowWindow(users_button,enabled?SW_SHOW:SW_HIDE);
 ShowWindow(sa_button,enabled?SW_SHOW:SW_HIDE);
 ShowWindow(new_project_button,enabled?SW_SHOW:SW_HIDE);
 ShowWindow(list_projects_button,enabled?SW_SHOW:SW_HIDE);
-EnableWindow(users_button,enabled);EnableWindow(channel_list,enabled);EnableWindow(output_box,enabled);EnableWindow(input_box,enabled);EnableWindow(send_button,enabled);EnableWindow(new_channel_button,enabled);EnableWindow(alerts_list,enabled);EnableWindow(ack_button,enabled);EnableWindow(refresh_button,enabled);EnableWindow(logout_button,enabled);EnableWindow(sa_button,enabled);EnableWindow(new_project_button,enabled);EnableWindow(bind_security_button,FALSE);EnableWindow(list_projects_button,enabled);EnableWindow(security_grant_button,FALSE);}
+EnableWindow(users_button,enabled);EnableWindow(main_users_list,enabled);EnableWindow(channel_list,enabled);EnableWindow(output_box,enabled);EnableWindow(input_box,enabled);EnableWindow(send_button,enabled);EnableWindow(new_channel_button,enabled);EnableWindow(alerts_list,enabled);EnableWindow(ack_button,enabled);EnableWindow(refresh_button,enabled);EnableWindow(logout_button,enabled);EnableWindow(sa_button,enabled);EnableWindow(new_project_button,enabled);EnableWindow(bind_security_button,FALSE);EnableWindow(list_projects_button,enabled);EnableWindow(security_grant_button,FALSE);}
 
 
 static void trim_line(char *text){size_t n;if(!text)return;n=strlen(text);while(n>0&&(text[n-1]=='\r'||text[n-1]=='\n'||text[n-1]==' '||text[n-1]=='\t'))text[--n]=0;}
@@ -189,6 +190,7 @@ static void do_logout(void){
     if(member_window)DestroyWindow(member_window);
     if(users_window)DestroyWindow(users_window);
     SendMessageA(channel_list,LB_RESETCONTENT,0,0);SendMessageA(alerts_list,LB_RESETCONTENT,0,0);
+    if(main_users_list)SendMessageA(main_users_list,LB_RESETCONTENT,0,0);
     active_channel[0]=0;selected_org[0]=0;selected_project[0]=0;channel_count=0;alert_count=0;
     SetWindowTextW(output_box,L"");SetWindowTextA(status_text,"Signed out");
 }
@@ -373,6 +375,43 @@ static void load_channels(void){
  if(digit_request("GET","/channels",NULL,response,sizeof(response),10000,&e,&s))
   channel_navigation(response);
 }
+/* [AI:GPT-6 | 2026-10-09] Main-window human users projection.
+ * Uses the SA-authorized project roster. Digit is a service identity,
+ * not a human presence, and is not displayed as an operator. */
+static void load_main_users(void){
+ char body[160],reply[16384]={0},user[64],line[128],record[512];
+ const char *cursor,*end;DWORD error=0,status=0;unsigned count=0;
+ if(!main_users_list||!main_users_heading)return;
+ SendMessageA(main_users_list,LB_RESETCONTENT,0,0);
+ if(!session_authenticated||!selected_org[0]||!selected_project[0]){
+  SetWindowTextA(main_users_heading,"Users - select a project");return;
+ }
+ snprintf(line,sizeof(line),"Users - %s / %s",selected_org,selected_project);
+ SetWindowTextA(main_users_heading,line);
+ snprintf(body,sizeof(body),"%s\t%s",selected_org,selected_project);
+ if(!digit_request("POST","/admin/project-members",body,reply,sizeof(reply),
+                   10000,&error,&status)){
+  SendMessageA(main_users_list,LB_ADDSTRING,0,(LPARAM)
+   (status==403?"Restricted - SA access required":"Directory unavailable"));
+  return;
+ }
+ cursor=strstr(reply,"\"members\":[");
+ if(!cursor){SendMessageA(main_users_list,LB_ADDSTRING,0,(LPARAM)"Invalid directory response");return;}
+ cursor=strchr(cursor,'[')+1;
+ while((cursor=strstr(cursor,"\"user\":\""))!=NULL){
+  size_t n;end=strchr(cursor,'}');if(!end)break;
+  n=(size_t)(end-cursor);if(n>=sizeof(record))break;
+  memcpy(record,cursor,n);record[n]=0;
+  if(!json_string_after(record,"user",user,sizeof(user)))break;
+  if(strcmp(user,"digit")!=0){
+   snprintf(line,sizeof(line),"%s%s",user,
+     strstr(record,"\"sa_authorized\":true")?"  [SA]":"");
+   SendMessageA(main_users_list,LB_ADDSTRING,0,(LPARAM)line);count++;
+  }
+  cursor=end+1;
+ }
+ if(!count)SendMessageA(main_users_list,LB_ADDSTRING,0,(LPARAM)"No human members listed");
+}
 static void load_history(void){char path[256],response[BUFFER_MAX],origin[64],body[4096];DWORD e,s;const char *p;if(!active_channel[0])return;snprintf(path,sizeof(path),"/channels/%s/messages",active_channel);SetWindowTextW(output_box,L"");if(!digit_request("GET",path,NULL,response,sizeof(response),10000,&e,&s))return;p=response;while((p=strstr(p,"\"origin\":\""))!=NULL){if(!json_string_after(p,"origin",origin,sizeof(origin))||!json_string_after(p,"body",body,sizeof(body)))break;append_output(strcmp(origin,"digit")==0?"Digit":strcmp(origin,"operator")==0?"You":origin,body);p+=10;}}
 static void load_alerts(void){char response[BUFFER_MAX],id[64],severity[16],summary[256],display[384];DWORD e,s;const char *p;size_t count=0;SendMessageA(alerts_list,LB_RESETCONTENT,0,0);if(!digit_request("GET","/alerts",NULL,response,sizeof(response),10000,&e,&s))return;p=response;while(count<ALERT_MAX&&(p=strstr(p,"\"id\":\""))!=NULL){if(!json_string_after(p,"id",id,sizeof(id))||!json_string_after(p,"severity",severity,sizeof(severity))||!json_string_after(p,"summary",summary,sizeof(summary)))break;strcpy_s(alerts[count].id,sizeof(alerts[count].id),id);strcpy_s(alerts[count].severity,sizeof(alerts[count].severity),severity);strcpy_s(alerts[count].summary,sizeof(alerts[count].summary),summary);{
 const char *next=strstr(p+6,"\"id\":\"");
@@ -460,6 +499,7 @@ static void apply_sync(digit_sync_result_t *result){
       KillTimer(main_window,ID_SYNC_TIMER);++sync_generation;
       clear_session();set_access_controls(FALSE);EnableWindow(login_button,TRUE);
       if(users_window)DestroyWindow(users_window);
+      if(main_users_list)SendMessageA(main_users_list,LB_RESETCONTENT,0,0);
       SendMessageA(channel_list,LB_RESETCONTENT,0,0);
       SendMessageA(alerts_list,LB_RESETCONTENT,0,0);
       channel_count=0;alert_count=0;active_channel[0]=0;
@@ -470,7 +510,7 @@ static void apply_sync(digit_sync_result_t *result){
       MessageBoxA(main_window,"Digit session expired or was invalidated by server hotload. Please sign in again.",APP_TITLE,MB_OK|MB_ICONINFORMATION);
     }
 }
-static void refresh_all(void){if(!session_authenticated)return;check_health();load_channels();load_history();start_sync();}
+static void refresh_all(void){if(!session_authenticated)return;check_health();load_channels();load_history();load_main_users();start_sync();}
 static DWORD WINAPI ask_worker(LPVOID parameter){digit_request_job_t *job=(digit_request_job_t *)parameter;digit_result_t *result=(digit_result_t *)calloc(1,sizeof(*result));char response[BUFFER_MAX],path[256];if(!result){free(job);return 1;}strcpy_s(result->channel_id,sizeof(result->channel_id),job->channel_id);snprintf(path,sizeof(path),"/channels/%s/ask",job->channel_id);result->ok=digit_request("POST",path,job->question,response,sizeof(response),ASK_RECEIVE_TIMEOUT_MS,&result->error,&result->http_status);if(result->ok&&!extract_answer(response,result->answer,sizeof(result->answer))){result->ok=0;result->error=ERROR_INVALID_DATA;}free(job);PostMessageA(main_window,WM_DIGIT_RESULT,0,(LPARAM)result);return 0;}
 /* [AI:GPT-6 | 2026-10-09] Alert acknowledgement from the existing chat
  * input, with an exact Core-issued ID and server-side validation. */
@@ -1054,8 +1094,10 @@ list_projects_button=CreateWindowA("BUTTON","List Projects",WS_CHILD|WS_VISIBLE|
 security_grant_button=CreateWindowA("BUTTON","Grant Security",WS_CHILD,943,12,112,25,hwnd,(HMENU)ID_SECURITY_GRANT,NULL,NULL);
 { HWND controls[]={username_box,password_box,login_button,logout_button,users_button,sa_button,new_project_button,bind_security_button,list_projects_button,security_grant_button};size_t ci;for(ci=0;ci<sizeof(controls)/sizeof(controls[0]);++ci)SendMessageA(controls[ci],WM_SETFONT,(WPARAM)ui_font,TRUE);}
 
+main_users_heading=CreateWindowA("STATIC","Users - select a project",WS_CHILD|WS_VISIBLE,0,0,210,28,hwnd,NULL,NULL,NULL);
+main_users_list=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",WS_CHILD|WS_VISIBLE|WS_VSCROLL,0,0,210,280,hwnd,NULL,NULL,NULL);
 channel_list=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|LBS_NOTIFY|WS_TABSTOP,12,12,170,310,hwnd,(HMENU)ID_CHANNELS,NULL,NULL);new_channel_button=CreateWindowA("BUTTON","New Channel",WS_CHILD|WS_VISIBLE|WS_TABSTOP,12,328,170,28,hwnd,(HMENU)ID_NEW_CHANNEL,NULL,NULL);output_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL|WS_TABSTOP,194,12,560,390,hwnd,(HMENU)ID_OUTPUT,NULL,NULL);alerts_list=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",WS_CHILD|WS_VSCROLL|LBS_NOTIFY,766,12,250,310,hwnd,(HMENU)ID_ALERTS,NULL,NULL);ack_button=CreateWindowA("BUTTON","Acknowledge",WS_CHILD,766,328,120,28,hwnd,(HMENU)ID_ACK_ALERT,NULL,NULL);refresh_button=CreateWindowA("BUTTON","Refresh",WS_CHILD|WS_VISIBLE|WS_TABSTOP,896,328,120,28,hwnd,(HMENU)ID_REFRESH,NULL,NULL);input_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL|WS_TABSTOP,194,414,460,28,hwnd,(HMENU)ID_INPUT,NULL,NULL);send_button=CreateWindowA("BUTTON","Send",WS_CHILD|WS_VISIBLE|BS_DEFPUSHBUTTON|WS_TABSTOP,664,414,90,28,hwnd,(HMENU)ID_SEND,NULL,NULL);status_text=CreateWindowA("STATIC","Checking...",WS_CHILD|WS_VISIBLE,12,452,1000,20,hwnd,(HMENU)ID_STATUS,NULL,NULL);
-{ HWND controls[]={channel_list,new_channel_button,output_box,input_box,send_button,alerts_list,ack_button,refresh_button,status_text};size_t ci;for(ci=0;ci<sizeof(controls)/sizeof(controls[0]);++ci)if(controls[ci])SendMessageA(controls[ci],WM_SETFONT,(WPARAM)ui_font,TRUE);}
+{ HWND controls[]={main_users_heading,main_users_list,channel_list,new_channel_button,output_box,input_box,send_button,alerts_list,ack_button,refresh_button,status_text};size_t ci;for(ci=0;ci<sizeof(controls)/sizeof(controls[0]);++ci)if(controls[ci])SendMessageA(controls[ci],WM_SETFONT,(WPARAM)ui_font,TRUE);}
 set_access_controls(FALSE);SetWindowTextA(status_text,"Sign in to Digit");SendMessageA(hwnd,WM_SIZE,0,MAKELPARAM(1180,560));return 0;case WM_ERASEBKGND:{RECT rc;GetClientRect(hwnd,&rc);FillRect((HDC)wparam,&rc,surface_brush);return 1;}
 case WM_CTLCOLORSTATIC:
 case WM_CTLCOLOREDIT:
@@ -1087,18 +1129,20 @@ case WM_COMMAND:switch(LOWORD(wparam)){case ID_LOGIN:do_login();return 0;case ID
   }
   if(unique==1)strcpy_s(selected_project,sizeof(selected_project),channels[chosen].project);
  }
-}}}return 0;case ID_NEW_CHANNEL:prompt_new_channel();return 0;case ID_ACK_ALERT:acknowledge_alert();return 0;case ID_REFRESH:refresh_all();return 0;}break;case WM_TIMER:if(wparam==ID_SYNC_TIMER){start_sync();return 0;}break;
+}}}load_main_users();return 0;case ID_NEW_CHANNEL:prompt_new_channel();return 0;case ID_ACK_ALERT:acknowledge_alert();return 0;case ID_REFRESH:refresh_all();return 0;}break;case WM_TIMER:if(wparam==ID_SYNC_TIMER){start_sync();return 0;}break;
 case WM_DIGIT_REFRESH:if(lparam){apply_sync((digit_sync_result_t *)lparam);}return 0;
-case WM_DIGIT_RESULT:{digit_result_t *result=(digit_result_t *)lparam;char message[512];EnableWindow(send_button,TRUE);if(result){if(result->ok){if(strcmp(result->channel_id,active_channel)==0)append_output("Digit",result->answer);}else if(result->http_status){snprintf(message,sizeof(message),"Digit returned HTTP status %lu.",(unsigned long)result->http_status);append_output("Digit GUI",message);}else{snprintf(message,sizeof(message),"Windows network error %lu while waiting for Digit.",(unsigned long)result->error);append_output("Digit GUI",message);}free(result);}SetFocus(input_box);return 0;}case WM_SIZE:{int w=LOWORD(lparam),h=HIWORD(lparam),left=170,right=0,center=w-left-48;
+case WM_DIGIT_RESULT:{digit_result_t *result=(digit_result_t *)lparam;char message[512];EnableWindow(send_button,TRUE);if(result){if(result->ok){if(strcmp(result->channel_id,active_channel)==0)append_output("Digit",result->answer);}else if(result->http_status){snprintf(message,sizeof(message),"Digit returned HTTP status %lu.",(unsigned long)result->http_status);append_output("Digit GUI",message);}else{snprintf(message,sizeof(message),"Windows network error %lu while waiting for Digit.",(unsigned long)result->error);append_output("Digit GUI",message);}free(result);}SetFocus(input_box);return 0;}case WM_SIZE:{int w=LOWORD(lparam),h=HIWORD(lparam),left=170,right=220,center=w-left-right-48;
 MoveWindow(username_box,12,12,138,25,TRUE);MoveWindow(password_box,160,12,138,25,TRUE);
 MoveWindow(login_button,308,12,78,25,TRUE);MoveWindow(logout_button,396,12,78,25,TRUE);
 MoveWindow(users_button,484,12,80,25,TRUE);MoveWindow(sa_button,574,12,90,25,TRUE);MoveWindow(new_project_button,674,12,105,25,TRUE);MoveWindow(bind_security_button,699,12,112,25,TRUE);MoveWindow(list_projects_button,891,12,112,25,TRUE);MoveWindow(security_grant_button,943,12,112,25,TRUE);
 MoveWindow(channel_list,12,48,left,h-166,TRUE);MoveWindow(new_channel_button,12,h-112,left,28,TRUE);
 MoveWindow(output_box,194,48,center,h-128,TRUE);MoveWindow(input_box,194,h-68,center-102,28,TRUE);
 MoveWindow(send_button,194+center-90,h-68,90,28,TRUE);
-MoveWindow(alerts_list,w-right-12,48,right,h-166,TRUE);
-MoveWindow(ack_button,w-right-12,h-112,120,28,TRUE);
-MoveWindow(refresh_button,w-132,h-112,120,28,TRUE);
+MoveWindow(main_users_heading,w-right-6,54,right-18,24,TRUE);
+MoveWindow(main_users_list,w-right-6,82,right-18,h-164,TRUE);
+MoveWindow(alerts_list,w,48,0,0,TRUE);
+MoveWindow(ack_button,w,h-112,0,0,TRUE);
+MoveWindow(refresh_button,w-132,h-68,120,28,TRUE);
 MoveWindow(status_text,12,h-32,w-24,20,TRUE);return 0;}case WM_DESTROY:KillTimer(hwnd,ID_SYNC_TIMER);if(ui_font)DeleteObject(ui_font);if(surface_brush)DeleteObject(surface_brush);if(input_brush)DeleteObject(input_brush);++sync_generation;clear_session();main_window=NULL;PostQuitMessage(0);return 0;}return DefWindowProcA(hwnd,msg,wparam,lparam);}
 static int self_test(void){char answer[256],value[256];int failures=0;if(!extract_answer("{\"answered\":true,\"answer\":\"Ready.\"}",answer,sizeof(answer))||strcmp(answer,"Ready.")!=0)++failures;if(!json_string_after("{\"id\":\"general\",\"name\":\"General\"}","name",value,sizeof(value))||strcmp(value,"General")!=0)++failures;if(!json_string_after("{\"severity\":\"ERROR\",\"summary\":\"Module rejected\"}","summary",value,sizeof(value))||strcmp(value,"Module rejected")!=0)++failures;return failures?1:0;}
 int WINAPI WinMain(HINSTANCE instance,HINSTANCE previous,LPSTR command_line,int show){WNDCLASSA wc={0};HWND hwnd;MSG msg;(void)previous;(void)command_line;if(!load_config()){MessageBoxA(NULL,"Unable to load digit.conf beside digit-gui.exe. Expected host=<server> and port=<port>.",APP_TITLE,MB_OK|MB_ICONERROR);return 1;}wc.lpfnWndProc=window_proc;wc.hInstance=instance;wc.lpszClassName="DigitGuiWindow";wc.hCursor=LoadCursor(NULL,IDC_ARROW);wc.hbrBackground=(HBRUSH)(COLOR_WINDOW+1);if(!RegisterClassA(&wc))return 1;hwnd=CreateWindowExA(0,wc.lpszClassName,APP_TITLE,WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,1180,560,NULL,NULL,instance,NULL);if(!hwnd)return 1;ShowWindow(hwnd,show);UpdateWindow(hwnd);/* [AI:GPT-6 | 2026-10-09] Native keyboard workflow: Tab navigates enabled visible controls; Enter submits the focused login or message field. */
