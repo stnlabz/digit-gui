@@ -243,19 +243,27 @@ static void channel_navigation(const char *json){
   * the bound channel when it exists; never misclassify the orphan by name.
   * This is display filtering only: no channel or ACL is modified. */
  {
-  int bound_alerts=0;
+  int bound_alerts=0,bound_security=0;
   size_t read_index,write_index=0;
   for(i=0;i<count;i++)
    if(!strcmp(channels[i].organization,"stn-labz")&&
       !strcmp(channels[i].project,"operations")&&
       (!strcmp(channels[i].name,"Alerts")||
        !strncmp(channels[i].name,"alerts-",7)))bound_alerts=1;
+  for(i=0;i<count;i++)
+   if(channels[i].organization[0]&&channels[i].project[0]&&
+      (!strcmp(channels[i].name,"Security")||
+       !strncmp(channels[i].name,"security-",9)))bound_security=1;
   for(read_index=0;read_index<count;read_index++){
    int legacy_alert=!channels[read_index].organization[0]&&
       (!strcmp(channels[read_index].name,"Alerts")||
        !strcmp(channels[read_index].name,"alerts")||
        !strncmp(channels[read_index].name,"alerts-",7));
-   if(bound_alerts&&legacy_alert){
+   int legacy_security=!channels[read_index].organization[0]&&
+      (!strcmp(channels[read_index].name,"Security")||
+       !strcmp(channels[read_index].name,"security")||
+       !strncmp(channels[read_index].name,"security-",9));
+   if((bound_alerts&&legacy_alert)||(bound_security&&legacy_security)){
     if(!strcmp(active_channel,channels[read_index].id))active_channel[0]=0;
     continue;
    }
