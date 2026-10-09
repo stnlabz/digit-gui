@@ -36,7 +36,7 @@
 #define DIGIT_SYNC_INTERVAL_MS 3000
 #define ASK_RECEIVE_TIMEOUT_MS 180000
 
-typedef struct{char id[64];char name[128];} channel_item_t;
+typedef struct{char id[64];char name[128];char organization[64];char project[64];} channel_item_t;
 typedef struct{char id[64];char severity[16];char summary[256];int acknowledged;} alert_item_t;
 typedef struct{int ok;DWORD error;DWORD http_status;char answer[4096];char channel_id[64];} digit_result_t;
 typedef struct{char question[4096];char channel_id[64];} digit_request_job_t;
@@ -201,7 +201,82 @@ static void check_sa(void){
     MessageBoxA(main_window,dialog,APP_TITLE,MB_OK|MB_ICONINFORMATION);
 }
 static void check_health(void){char response[1024];DWORD e,s;if(digit_request("GET","/health",NULL,response,sizeof(response),10000,&e,&s)&&strstr(response,"READY"))SetWindowTextA(status_text,"Connected");else SetWindowTextA(status_text,"Offline");}
-static void load_channels(void){char response[BUFFER_MAX],name[128],id[64];DWORD e,s;const char *p;size_t count=0;SendMessageA(channel_list,LB_RESETCONTENT,0,0);if(!digit_request("GET","/channels",NULL,response,sizeof(response),10000,&e,&s))return;p=response;while(count<CHANNEL_MAX&&(p=strstr(p,"\"id\":\""))!=NULL){if(!json_string_after(p,"id",id,sizeof(id))||!json_string_after(p,"name",name,sizeof(name)))break;strcpy_s(channels[count].id,sizeof(channels[count].id),id);strcpy_s(channels[count].name,sizeof(channels[count].name),name);SendMessageA(channel_list,LB_ADDSTRING,0,(LPARAM)(strncmp(name,"security-",9)==0?"Security":strncmp(name,"alerts-",7)==0?"Alerts":name));if(strcmp(id,active_channel)==0)SendMessageA(channel_list,LB_SETCURSEL,(WPARAM)count,0);++count;p+=6;}channel_count=count;if(SendMessageA(channel_list,LB_GETCURSEL,0,0)==LB_ERR&&count){SendMessageA(channel_list,LB_SETCURSEL,0,0);strcpy_s(active_channel,sizeof(active_channel),channels[0].id);}}
+/* [AI:GPT-6 | 2026-10-09] Build organization > project > channel
+ * navigation using server-verified owner metadata. Heading rows never route. */
+static void channel_navigation(const char *json){
+ const char *p=json;
+ size_t count=0,i,j,selection=(size_t)-1;
+ char id[64],name[128],scope[64],project[64],record[1024],display[240];
+ SendMessageA(channel_list,LB_RESETCONTENT,0,0);
+ while(count<CHANNEL_MAX&&(p=strstr(p,"\"id\":\""))!=NULL){
+  const char *end=strchr(p,'}');
+  size_t n;
+  if(!end||end<p||((n=(size_t)(end-p))>=sizeof(record)))break;
+  memcpy(record,p,n);record[n]=0;
+  if(!json_string_after(record,"id",id,sizeof(id))||
+     !json_string_after(record,"name",name,sizeof(name)))break;
+  scope[0]=project[0]=0;
+  json_string_after(record,"organization",scope,sizeof(scope));
+  json_string_after(record,"project",project,sizeof(project));
+  strcpy_s(channels[count].id,sizeof(channels[count].id),id);
+  strcpy_s(channels[count].name,sizeof(channels[count].name),name);
+  strcpy_s(channels[count].organization,sizeof(channels[count].organization),scope);
+  strcpy_s(channels[count].project,sizeof(channels[count].project),project);
+  ++count;p=end+1;
+ }
+ channel_count=count;
+ /* Project group headers are displayed only for authoritative channel owners.
+  * Unbound legacy channels remain visible in a separate neutral section. */
+ for(i=0;i<count;i++){
+  int already=0;const char *org=channels[i].organization;
+  for(j=0;j<i;j++)if(strcmp(org,channels[j].organization)==0){already=1;break;}
+  if(already)continue;
+  snprintf(display,sizeof(display),"%s",!strcmp(org,"stn-labz")?"STN-LABZ":
+           !strcmp(org,"team-chaos")?"Team ChAoS":org[0]?org:"Other Channels");
+  {LRESULT row=SendMessageA(channel_list,LB_ADDSTRING,0,(LPARAM)display);
+   SendMessageA(channel_list,LB_SETITEMDATA,(WPARAM)row,(LPARAM)-1);}
+  for(j=0;j<count;j++){
+   size_t k;
+   const char *proj=channels[j].project;
+   if(strcmp(channels[j].organization,org)!=0)continue;
+   for(k=0;k<j;k++)
+    if(!strcmp(channels[k].organization,org)&&!strcmp(channels[k].project,proj))break;
+   if(k!=j)continue;
+   if(proj[0]){
+    snprintf(display,sizeof(display),"   %s",proj);
+    {LRESULT row=SendMessageA(channel_list,LB_ADDSTRING,0,(LPARAM)display);
+     SendMessageA(channel_list,LB_SETITEMDATA,(WPARAM)row,(LPARAM)-1);}
+   }
+   for(k=0;k<count;k++){
+    LRESULT row;
+    const char *label;
+    if(strcmp(channels[k].organization,org)||strcmp(channels[k].project,proj))continue;
+    label=strncmp(channels[k].name,"security-",9)==0?"Security":
+          strncmp(channels[k].name,"alerts-",7)==0?"Alerts":channels[k].name;
+    snprintf(display,sizeof(display),"%s%s",proj[0]?"      ":"   ",label);
+    row=SendMessageA(channel_list,LB_ADDSTRING,0,(LPARAM)display);
+    if(row==LB_ERR||row==LB_ERRSPACE)continue;
+    SendMessageA(channel_list,LB_SETITEMDATA,(WPARAM)row,(LPARAM)k);
+    if(strcmp(channels[k].id,active_channel)==0)selection=(size_t)row;
+   }
+  }
+ }
+ if(selection==(size_t)-1){
+  active_channel[0]=0;
+  for(i=0;i<(size_t)SendMessageA(channel_list,LB_GETCOUNT,0,0);i++){
+   LRESULT index=SendMessageA(channel_list,LB_GETITEMDATA,(WPARAM)i,0);
+   if(index!=LB_ERR&&index>=0&&(size_t)index<count){
+    selection=i;strcpy_s(active_channel,sizeof(active_channel),channels[index].id);break;
+   }
+  }
+ }
+ if(selection!=(size_t)-1)SendMessageA(channel_list,LB_SETCURSEL,(WPARAM)selection,0);
+}
+static void load_channels(void){
+ char response[BUFFER_MAX];DWORD e,s;
+ if(digit_request("GET","/channels",NULL,response,sizeof(response),10000,&e,&s))
+  channel_navigation(response);
+}
 static void load_history(void){char path[256],response[BUFFER_MAX],origin[64],body[4096];DWORD e,s;const char *p;if(!active_channel[0])return;snprintf(path,sizeof(path),"/channels/%s/messages",active_channel);SetWindowTextW(output_box,L"");if(!digit_request("GET",path,NULL,response,sizeof(response),10000,&e,&s))return;p=response;while((p=strstr(p,"\"origin\":\""))!=NULL){if(!json_string_after(p,"origin",origin,sizeof(origin))||!json_string_after(p,"body",body,sizeof(body)))break;append_output(strcmp(origin,"digit")==0?"Digit":strcmp(origin,"operator")==0?"You":origin,body);p+=10;}}
 static void load_alerts(void){char response[BUFFER_MAX],id[64],severity[16],summary[256],display[384];DWORD e,s;const char *p;size_t count=0;SendMessageA(alerts_list,LB_RESETCONTENT,0,0);if(!digit_request("GET","/alerts",NULL,response,sizeof(response),10000,&e,&s))return;p=response;while(count<ALERT_MAX&&(p=strstr(p,"\"id\":\""))!=NULL){if(!json_string_after(p,"id",id,sizeof(id))||!json_string_after(p,"severity",severity,sizeof(severity))||!json_string_after(p,"summary",summary,sizeof(summary)))break;strcpy_s(alerts[count].id,sizeof(alerts[count].id),id);strcpy_s(alerts[count].severity,sizeof(alerts[count].severity),severity);strcpy_s(alerts[count].summary,sizeof(alerts[count].summary),summary);{
 const char *next=strstr(p+6,"\"id\":\"");
@@ -256,27 +331,7 @@ static void apply_sync(digit_sync_result_t *result){
         if(result->channels_ok){
             unsigned long current=sync_hash(result->channels_json);
             if(current!=last_channel_list_hash){
-                char id[64],name[128];
-                const char *p=result->channels_json;
-                size_t count=0,selection=(size_t)-1;
-                SendMessageA(channel_list,LB_RESETCONTENT,0,0);
-                while(count<CHANNEL_MAX&&(p=strstr(p,"\"id\":\""))!=NULL){
-                    if(!json_string_after(p,"id",id,sizeof(id))||
-                       !json_string_after(p,"name",name,sizeof(name)))break;
-                    strcpy_s(channels[count].id,sizeof(channels[count].id),id);
-                    strcpy_s(channels[count].name,sizeof(channels[count].name),name);
-                    SendMessageA(channel_list,LB_ADDSTRING,0,(LPARAM)
-                        (strncmp(name,"security-",9)==0?"Security":
-                         strncmp(name,"alerts-",7)==0?"Alerts":name));
-                    if(strcmp(id,active_channel)==0)selection=count;
-                    ++count;p+=6;
-                }
-                channel_count=count;
-                if(selection==(size_t)-1){
-                    active_channel[0]=0;
-                    if(count){selection=0;strcpy_s(active_channel,sizeof(active_channel),channels[0].id);}
-                }
-                if(selection!=(size_t)-1)SendMessageA(channel_list,LB_SETCURSEL,selection,0);
+                channel_navigation(result->channels_json);
                 last_channel_list_hash=current;
             }
         }
@@ -586,7 +641,7 @@ case WM_CTLCOLORLISTBOX:{
  SetBkColor(dc,msg==WM_CTLCOLORSTATIC?DIGIT_BG:DIGIT_SURFACE);
  return (LRESULT)(msg==WM_CTLCOLORSTATIC?surface_brush:input_brush);
 }
-case WM_COMMAND:switch(LOWORD(wparam)){case ID_LOGIN:do_login();return 0;case ID_LOGOUT:do_logout();return 0;case ID_SA_CHECK:check_sa();return 0;case ID_NEW_PROJECT:setup_project_security();return 0;case ID_BIND_SECURITY:prompt_bind_security();return 0;case ID_LIST_PROJECTS:prompt_list_projects();return 0;case ID_SECURITY_GRANT:prompt_security_grant();return 0;case ID_SEND:send_question();SetFocus(input_box);return 0;case ID_CHANNELS:if(HIWORD(wparam)==LBN_SELCHANGE){LRESULT sel=SendMessageA(channel_list,LB_GETCURSEL,0,0);if(sel!=LB_ERR&&(size_t)sel<channel_count){strcpy_s(active_channel,sizeof(active_channel),channels[sel].id);load_history();}}return 0;case ID_NEW_CHANNEL:prompt_new_channel();return 0;case ID_ACK_ALERT:acknowledge_alert();return 0;case ID_REFRESH:refresh_all();return 0;}break;case WM_TIMER:if(wparam==ID_SYNC_TIMER){start_sync();return 0;}break;
+case WM_COMMAND:switch(LOWORD(wparam)){case ID_LOGIN:do_login();return 0;case ID_LOGOUT:do_logout();return 0;case ID_SA_CHECK:check_sa();return 0;case ID_NEW_PROJECT:setup_project_security();return 0;case ID_BIND_SECURITY:prompt_bind_security();return 0;case ID_LIST_PROJECTS:prompt_list_projects();return 0;case ID_SECURITY_GRANT:prompt_security_grant();return 0;case ID_SEND:send_question();SetFocus(input_box);return 0;case ID_CHANNELS:if(HIWORD(wparam)==LBN_SELCHANGE){LRESULT sel=SendMessageA(channel_list,LB_GETCURSEL,0,0);if(sel!=LB_ERR){LRESULT index=SendMessageA(channel_list,LB_GETITEMDATA,(WPARAM)sel,0);if(index!=LB_ERR&&index>=0&&(size_t)index<channel_count){strcpy_s(active_channel,sizeof(active_channel),channels[index].id);load_history();}}}return 0;case ID_NEW_CHANNEL:prompt_new_channel();return 0;case ID_ACK_ALERT:acknowledge_alert();return 0;case ID_REFRESH:refresh_all();return 0;}break;case WM_TIMER:if(wparam==ID_SYNC_TIMER){start_sync();return 0;}break;
 case WM_DIGIT_REFRESH:if(lparam){apply_sync((digit_sync_result_t *)lparam);}return 0;
 case WM_DIGIT_RESULT:{digit_result_t *result=(digit_result_t *)lparam;char message[512];EnableWindow(send_button,TRUE);if(result){if(result->ok){if(strcmp(result->channel_id,active_channel)==0)append_output("Digit",result->answer);}else if(result->http_status){snprintf(message,sizeof(message),"Digit returned HTTP status %lu.",(unsigned long)result->http_status);append_output("Digit GUI",message);}else{snprintf(message,sizeof(message),"Windows network error %lu while waiting for Digit.",(unsigned long)result->error);append_output("Digit GUI",message);}free(result);}SetFocus(input_box);return 0;}case WM_SIZE:{int w=LOWORD(lparam),h=HIWORD(lparam),left=170,right=0,center=w-left-48;
 MoveWindow(username_box,12,12,138,25,TRUE);MoveWindow(password_box,160,12,138,25,TRUE);
