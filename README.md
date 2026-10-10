@@ -41,6 +41,17 @@ Use the actual authorized endpoint and certificate configuration for your deploy
 
 Observed GUI behavior: `#General` greetings receive replies; several broader identity/channel questions return a generic unable-to-interpret response. The status line has sometimes remained at `Waiting for Digit...` after a reply. These limitations remain open.
 
+## Operations Alert Center — GUI implementation candidate (2026-10-09)
+
+The native Windows client now has a **card-based presentation for the selected authorized `#Alerts` channel**. It reuses the already-authorized `GET /channels/{id}/messages` endpoint; the client does not fetch another organization's alerts, create grants, or infer access from the channel name. The existing channel-history pane remains unchanged for non-Alerts channels.
+
+- Each incident card has a severity-colored strip, headline, affected module, responsible subsystem, version and cause. **Double-click** an incident to view the full original message and its event ID, timestamp, reported cause, required action and origin.
+- The GUI extracts optional literal metadata lines from the authorized message body using `field: value` or `field=value`: `severity`, `summary`, `module`, `subsystem`, `version`, `event_id`, `timestamp`, `cause` and `action`.
+- If a field was not provided, the GUI displays **UNKNOWN**. It **never guesses** which module failed, never supplies an invented diagnosis, and retains the original authorized event text.
+- Switching away from `#Alerts` restores the usual conversation pane. Sign-out/session expiration clears incident data. Legacy unstructured channel messages remain readable as incident entries, but cannot provide reliable module attribution without upstream evidence.
+
+**Qualification status: SOURCE COMMITTED; BUILD, SELF-TEST, LIVE ACCEPTANCE NOT YET VERIFIED.** Source includes deterministic parser/self-test cases for supplied fields and absent-field UNKNOWN fallback. The GUI is built with MSVC on Windows via `build.cmd`; no executable qualification evidence has yet been reported for this change. Upstream creation and organization-scoped delivery of structured incident messages, as well as clickable log navigation and verified cause attribution, remain separate integration requirements. Rendering a card is not proof that its diagnosis was established.
+
 ## Interface endpoints in use
 
 - `GET /health`: service health.
