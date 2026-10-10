@@ -469,6 +469,26 @@ static void incident_field(const char *body,const char *key,char *out,size_t cap
   p=end?end+1:NULL;
  }
 }
+/* [AI:GPT-6 | 2026-10-10] Accept an explicit audit event key=value
+ * regardless of placement in the line; reject malformed or conflicting
+ * values rather than infer a module from surrounding prose. */
+static void incident_event_module(const char *body,char *out,size_t cap){
+ const char *p=body;char found[96]="";int conflict=0;
+ if(!body||!out||!cap)return;
+ while((p=strstr(p,"module="))!=NULL){
+  const char *v=p+7;size_t n=0;
+  if(p!=body&&p[-1]!=' '&&p[-1]!='\t'&&p[-1]!='\n'){p=v;continue;}
+  while(((v[n]>='a'&&v[n]<='z')||(v[n]>='A'&&v[n]<='Z')||
+          (v[n]>='0'&&v[n]<='9')||v[n]=='_'||v[n]=='-')&&n<95)++n;
+  if(n&&n<cap&&(v[n]==' '||v[n]=='\r'||v[n]=='\n'||v[n]==0)){
+   char candidate[96];memcpy(candidate,v,n);candidate[n]=0;
+   if(found[0]&&strcmp(found,candidate))conflict=1;
+   else snprintf(found,sizeof(found),"%s",candidate);
+  }
+  p=v+n;
+ }
+ if(found[0]&&!conflict)snprintf(out,cap,"%s",found);
+}
 static void incident_from_message(incident_card_t *c,const char *origin,const char *body){
  size_t n;
  memset(c,0,sizeof(*c));
@@ -476,6 +496,7 @@ static void incident_from_message(incident_card_t *c,const char *origin,const ch
  snprintf(c->body,sizeof(c->body),"%s",body);
  incident_field(body,"severity",c->severity,sizeof(c->severity));
  incident_field(body,"module",c->module,sizeof(c->module));
+ if(!strcmp(c->module,"UNKNOWN"))incident_event_module(body,c->module,sizeof(c->module));
  incident_field(body,"subsystem",c->subsystem,sizeof(c->subsystem));
  incident_field(body,"version",c->version,sizeof(c->version));
  incident_field(body,"event_id",c->event_id,sizeof(c->event_id));
@@ -1289,7 +1310,7 @@ MoveWindow(alerts_list,w,48,0,0,TRUE);
 MoveWindow(ack_button,w,h-112,0,0,TRUE);
 MoveWindow(refresh_button,w-132,h-68,120,28,TRUE);
 MoveWindow(status_text,12,h-32,w-24,20,TRUE);return 0;}case WM_DESTROY:KillTimer(hwnd,ID_SYNC_TIMER);if(ui_font)DeleteObject(ui_font);if(surface_brush)DeleteObject(surface_brush);if(input_brush)DeleteObject(input_brush);++sync_generation;clear_session();main_window=NULL;PostQuitMessage(0);return 0;}return DefWindowProcA(hwnd,msg,wparam,lparam);}
-static int self_test(void){char answer[256],value[256];incident_card_t example;int failures=0;incident_from_message(&example,"digit","severity: ERROR\nmodule: Interface\nsubsystem: qualification persistence\nversion: 1.7.6\ncause: inventory full\nsummary: Module rejected");if(strcmp(example.module,"Interface")||strcmp(example.subsystem,"qualification persistence")||strcmp(example.cause,"inventory full")||strcmp(example.severity,"ERROR"))++failures;incident_from_message(&example,"digit","Module rejected");if(strcmp(example.module,"UNKNOWN")||strcmp(example.cause,"UNKNOWN")||strcmp(example.summary,"Module rejected"))++failures;if(!extract_answer("{\"answered\":true,\"answer\":\"Ready.\"}",answer,sizeof(answer))||strcmp(answer,"Ready.")!=0)++failures;if(!json_string_after("{\"id\":\"general\",\"name\":\"General\"}","name",value,sizeof(value))||strcmp(value,"General")!=0)++failures;if(!json_string_after("{\"severity\":\"ERROR\",\"summary\":\"Module rejected\"}","summary",value,sizeof(value))||strcmp(value,"Module rejected")!=0)++failures;return failures?1:0;}
+static int self_test(void){char answer[256],value[256];incident_card_t example;int failures=0;incident_from_message(&example,"digit","severity: ERROR\nmodule: Interface\nsubsystem: qualification persistence\nversion: 1.7.6\ncause: inventory full\nsummary: Module rejected");if(strcmp(example.module,"Interface")||strcmp(example.subsystem,"qualification persistence")||strcmp(example.cause,"inventory full")||strcmp(example.severity,"ERROR"))++failures;incident_from_message(&example,"digit","2026-10-10T03:18:21Z MODULE UPDATE_CANDIDATE sequence=13 module=interface module=interface");if(strcmp(example.module,"interface"))++failures;incident_from_message(&example,"digit","MODULE UPDATE_CANDIDATE module=interface module=validator");if(strcmp(example.module,"UNKNOWN"))++failures;incident_from_message(&example,"digit","Module rejected");if(strcmp(example.module,"UNKNOWN")||strcmp(example.cause,"UNKNOWN")||strcmp(example.summary,"Module rejected"))++failures;if(!extract_answer("{\"answered\":true,\"answer\":\"Ready.\"}",answer,sizeof(answer))||strcmp(answer,"Ready.")!=0)++failures;if(!json_string_after("{\"id\":\"general\",\"name\":\"General\"}","name",value,sizeof(value))||strcmp(value,"General")!=0)++failures;if(!json_string_after("{\"severity\":\"ERROR\",\"summary\":\"Module rejected\"}","summary",value,sizeof(value))||strcmp(value,"Module rejected")!=0)++failures;return failures?1:0;}
 int WINAPI WinMain(HINSTANCE instance,HINSTANCE previous,LPSTR command_line,int show){WNDCLASSA wc={0};HWND hwnd;MSG msg;(void)previous;(void)command_line;if(!load_config()){MessageBoxA(NULL,"Unable to load digit.conf beside digit-gui.exe. Expected host=<server> and port=<port>.",APP_TITLE,MB_OK|MB_ICONERROR);return 1;}wc.lpfnWndProc=window_proc;wc.hInstance=instance;wc.lpszClassName="DigitGuiWindow";wc.hCursor=LoadCursor(NULL,IDC_ARROW);wc.hbrBackground=(HBRUSH)(COLOR_WINDOW+1);if(!RegisterClassA(&wc))return 1;hwnd=CreateWindowExA(0,wc.lpszClassName,APP_TITLE,WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,1180,560,NULL,NULL,instance,NULL);if(!hwnd)return 1;ShowWindow(hwnd,show);UpdateWindow(hwnd);/* [AI:GPT-6 | 2026-10-09] Native keyboard workflow: Tab navigates enabled visible controls; Enter submits the focused login or message field. */
 while(GetMessageA(&msg,NULL,0,0)>0){
     HWND focus=GetFocus();
