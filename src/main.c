@@ -90,6 +90,7 @@ static unsigned long shown_hash=0;
 static unsigned long last_channel_list_hash=0;
 typedef struct {unsigned int generation;int channels_ok,messages_ok,unauthorized;char channel_id[64];char *channels_json,*messages_json;} digit_sync_result_t;
 typedef struct {unsigned int generation;char channel_id[64];} digit_sync_job_t;
+static void incident_view(int visible);
 static void clear_session(void){SecureZeroMemory(session_token,sizeof(session_token));SecureZeroMemory(session_identity,sizeof(session_identity));session_authenticated=0;private_chat_active=0;}
 /* [AI:GPT-6 | 2026-10-09] Signed-out GUI exposes no administrative controls.
  * Server-side SA policy remains the authority for all operations. */
@@ -198,7 +199,7 @@ static void do_logout(void){
     if(users_window)DestroyWindow(users_window);
     SendMessageA(channel_list,LB_RESETCONTENT,0,0);SendMessageA(alerts_list,LB_RESETCONTENT,0,0);
     if(main_users_list)SendMessageA(main_users_list,LB_RESETCONTENT,0,0);
-    active_channel[0]=0;selected_org[0]=0;selected_project[0]=0;channel_count=0;alert_count=0;
+    active_channel[0]=0;selected_org[0]=0;selected_project[0]=0;channel_count=0;alert_count=0;incident_count=0;SendMessageA(incident_cards,LB_RESETCONTENT,0,0);incident_view(0);
     SetWindowTextW(output_box,L"");SetWindowTextA(status_text,"Signed out");
 }
 /* [AI:GPT-6 | 2026-10-08] Interface 1.6.9 read-only SA dashboard.
