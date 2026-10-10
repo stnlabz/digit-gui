@@ -106,9 +106,31 @@ static void trim_line(char *text){size_t n;if(!text)return;n=strlen(text);while(
 static int config_path(char *path,size_t path_size){DWORD n=GetModuleFileNameA(NULL,path,(DWORD)path_size);char *slash;if(n==0||n>=path_size)return 0;slash=strrchr(path,'\\');if(!slash)return 0;slash[1]=0;if(strlen(path)+strlen("digit.conf")+1>path_size)return 0;strcat_s(path,path_size,"digit.conf");return 1;}
 static int load_config(void){FILE *stream;char path[MAX_PATH],line[512];int have_host=0,have_port=0;if(!config_path(path,sizeof(path)))return 0;stream=fopen(path,"rb");if(!stream)return 0;while(fgets(line,sizeof(line),stream)){char *value;trim_line(line);if(!line[0]||line[0]=='#')continue;value=strchr(line,'=');if(!value)continue;*value++=0;if(strcmp(line,"host")==0){if(!value[0]||strlen(value)>=sizeof(digit_host)){fclose(stream);return 0;}strcpy_s(digit_host,sizeof(digit_host),value);have_host=1;}else if(strcmp(line,"port")==0){char *end=NULL;unsigned long port=strtoul(value,&end,10);if(!value[0]||!end||*end||port==0||port>65535){fclose(stream);return 0;}digit_port=(INTERNET_PORT)port;have_port=1;}}fclose(stream);return have_host&&have_port;}
 /* [AI:GPT-6 | 2026-10-09] Win32 EDIT requires CRLF, not Unix LF. */
+/* Decode only common HTML entities in displayed Digit text.
+ * The native output control displays text, never HTML markup. */
+static void digit_display_entities(const char *src,char *dst,size_t cap){
+ size_t o=0;
+ if(!src||!dst||!cap)return;
+ while(*src&&o+1<cap){
+  const char *value=NULL;size_t used=0;
+  if(strncmp(src,"&amp;",5)==0){value="&";used=5;}
+  else if(strncmp(src,"&lt;",4)==0){value="<";used=4;}
+  else if(strncmp(src,"&gt;",4)==0){value=">";used=4;}
+  else if(strncmp(src,"&quot;",6)==0){value="\"";used=6;}
+  else if(strncmp(src,"&#39;",5)==0){value="'";used=5;}
+  if(value){size_t len=strlen(value);if(o+len>=cap)break;memcpy(dst+o,value,len);o+=len;src+=used;}
+  else dst[o++]=*src++;
+ }
+ dst[o]=0;
+}
 static void append_output(const char *speaker,const char *text){
     char line[8192];WCHAR wide[8192];size_t n=0,i;int length;
+    char display[8192];
     const char *parts[2]={speaker,text};
+    if(speaker&&strcmp(speaker,"Digit")==0&&text){
+        digit_display_entities(text,display,sizeof(display));
+        parts[1]=display;
+    }
     for(i=0;i<2;i++){
         const char *p=parts[i];
         if(i==0){while(*p&&n+2<sizeof(line))line[n++]=*p++;line[n++]=':';line[n++]=' ';}
