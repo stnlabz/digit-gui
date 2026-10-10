@@ -36,6 +36,7 @@
 #define ID_PROJECT_MEMBERS 1024
 #define ID_MEMBER_REFRESH 1025
 #define ID_MEMBER_LIST 1026
+#define ID_INCIDENT_CARDS 1028
 #define BUFFER_MAX 65536
 #define CHANNEL_MAX 128
 #define ALERT_MAX 256
@@ -47,6 +48,8 @@
 
 typedef struct{char id[64];char name[128];char organization[64];char project[64];} channel_item_t;
 typedef struct{char id[64];char severity[16];char summary[256];int acknowledged;} alert_item_t;
+/* [AI:GPT-6 | 2026-10-09] Presentation-only incident records from authorized channel history. */
+typedef struct{char origin[64],body[4096],severity[16],module[96],subsystem[96],version[32],event_id[96],timestamp[64],cause[256],action[160],summary[256];} incident_card_t;
 typedef struct{int ok;DWORD error;DWORD http_status;char answer[4096];char channel_id[64];unsigned int generation;int private_chat;} digit_result_t;
 typedef struct{char question[4096];char channel_id[64];unsigned int generation;int private_chat;} digit_request_job_t;
 
@@ -62,7 +65,8 @@ static int private_chat_active=0;
 static HWND main_window,channel_list,output_box,input_box,send_button,status_text,new_channel_button,alerts_list,ack_button,refresh_button,username_box,password_box,login_button,logout_button,sa_button,new_project_button,bind_security_button,list_projects_button,security_grant_button,users_button;
 static HWND users_window,users_org_edit,users_target_edit,users_roster,users_feedback;
 static HWND member_window,member_list,member_detail,member_heading;
-static HWND main_users_list,main_users_heading;
+static HWND main_users_list,main_users_heading,incident_cards;
+static incident_card_t incident_rows[128];static size_t incident_count=0;
 static char member_org[64],member_project[64];
 static struct {char user[64];int account_active,sa_authorized;} member_rows[128];
 static size_t member_row_count=0;
@@ -94,7 +98,7 @@ ShowWindow(users_button,enabled?SW_SHOW:SW_HIDE);
 ShowWindow(sa_button,enabled?SW_SHOW:SW_HIDE);
 ShowWindow(new_project_button,enabled?SW_SHOW:SW_HIDE);
 ShowWindow(list_projects_button,enabled?SW_SHOW:SW_HIDE);
-EnableWindow(private_chat_button,enabled);EnableWindow(users_button,enabled);EnableWindow(main_users_list,enabled);EnableWindow(channel_list,enabled);EnableWindow(output_box,enabled);EnableWindow(input_box,enabled);EnableWindow(send_button,enabled);EnableWindow(new_channel_button,enabled);EnableWindow(alerts_list,enabled);EnableWindow(ack_button,enabled);EnableWindow(refresh_button,enabled);EnableWindow(logout_button,enabled);EnableWindow(sa_button,enabled);EnableWindow(new_project_button,enabled);EnableWindow(bind_security_button,FALSE);EnableWindow(list_projects_button,enabled);EnableWindow(security_grant_button,FALSE);}
+EnableWindow(private_chat_button,enabled);EnableWindow(users_button,enabled);EnableWindow(main_users_list,enabled);EnableWindow(channel_list,enabled);EnableWindow(output_box,enabled);EnableWindow(incident_cards,enabled);EnableWindow(input_box,enabled);EnableWindow(send_button,enabled);EnableWindow(new_channel_button,enabled);EnableWindow(alerts_list,enabled);EnableWindow(ack_button,enabled);EnableWindow(refresh_button,enabled);EnableWindow(logout_button,enabled);EnableWindow(sa_button,enabled);EnableWindow(new_project_button,enabled);EnableWindow(bind_security_button,FALSE);EnableWindow(list_projects_button,enabled);EnableWindow(security_grant_button,FALSE);}
 
 
 static void trim_line(char *text){size_t n;if(!text)return;n=strlen(text);while(n>0&&(text[n-1]=='\r'||text[n-1]=='\n'||text[n-1]==' '||text[n-1]=='\t'))text[--n]=0;}
@@ -189,7 +193,7 @@ static void do_logout(void){
     char response[256];DWORD error,status;
     if(session_authenticated)(void)digit_request("POST","/session/logout","",response,sizeof(response),10000,&error,&status);
     KillTimer(main_window,ID_SYNC_TIMER);++sync_generation;shown_channel[0]=0;last_channel_list_hash=0;
-    clear_session();set_access_controls(FALSE);EnableWindow(login_button,TRUE);
+    clear_session();set_access_controls(FALSE);EnableWindow(login_button,TRUE);incident_count=0;if(incident_cards){SendMessageA(incident_cards,LB_RESETCONTENT,0,0);incident_view(0);}
     if(member_window)DestroyWindow(member_window);
     if(users_window)DestroyWindow(users_window);
     SendMessageA(channel_list,LB_RESETCONTENT,0,0);SendMessageA(alerts_list,LB_RESETCONTENT,0,0);
@@ -430,7 +434,124 @@ static void load_main_users(void){
  }
  if(!count)SendMessageA(main_users_list,LB_ADDSTRING,0,(LPARAM)"No members listed");
 }
-static void load_history(void){char path[256],response[BUFFER_MAX],origin[64],body[4096];DWORD e,s;const char *p;if(private_chat_active||!active_channel[0])return;snprintf(path,sizeof(path),"/channels/%s/messages",active_channel);SetWindowTextW(output_box,L"");if(!digit_request("GET",path,NULL,response,sizeof(response),10000,&e,&s))return;p=response;while((p=strstr(p,"\"origin\":\""))!=NULL){if(!json_string_after(p,"origin",origin,sizeof(origin))||!json_string_after(p,"body",body,sizeof(body)))break;append_output(strcmp(origin,"digit")==0?"Digit":strcmp(origin,"operator")==0?"You":origin,body);p+=10;}}
+
+/* [AI:GPT-6 | 2026-10-09] The GUI never fabricates an incident cause or a
+ * module identity. Structured metadata is optional; absent fields are UNKNOWN.
+ * This parser consumes only a server-authorized #Alerts message body. */
+static int incident_channel(void){
+ size_t i;
+ if(private_chat_active||!session_authenticated)return 0;
+ for(i=0;i<channel_count;++i)
+  if(strcmp(channels[i].id,active_channel)==0){
+   const char *name=channels[i].name;
+   return !strcmp(name,"Alerts")||!strcmp(name,"alerts")||
+          !strncmp(name,"alerts-",7)||
+          !strcmp(name,"alerts-stn-labz-operations");
+  }
+ return 0;
+}
+static void incident_field(const char *body,const char *key,char *out,size_t cap){
+ size_t k=strlen(key),n=0;const char *p=body;
+ if(!cap)return;
+ strcpy_s(out,cap,"UNKNOWN");
+ while(p&&*p){
+  const char *end=strchr(p,'\n');
+  const char *line_end=end?end:p+strlen(p);
+  if((size_t)(line_end-p)>k+1&&!strncmp(p,key,k)&&
+     (p[k]==':'||p[k]=='=')){
+   const char *value=p+k+1;
+   while(value<line_end&&(*value==' '||*value=='\t'))++value;
+   while(value+n<line_end&&n+1<cap&&value[n]!='\r')++n;
+   if(n){memcpy(out,value,n);out[n]=0;}
+   return;
+  }
+  p=end?end+1:NULL;
+ }
+}
+static void incident_from_message(incident_card_t *c,const char *origin,const char *body){
+ size_t n;
+ memset(c,0,sizeof(*c));
+ snprintf(c->origin,sizeof(c->origin),"%s",origin);
+ snprintf(c->body,sizeof(c->body),"%s",body);
+ incident_field(body,"severity",c->severity,sizeof(c->severity));
+ incident_field(body,"module",c->module,sizeof(c->module));
+ incident_field(body,"subsystem",c->subsystem,sizeof(c->subsystem));
+ incident_field(body,"version",c->version,sizeof(c->version));
+ incident_field(body,"event_id",c->event_id,sizeof(c->event_id));
+ incident_field(body,"timestamp",c->timestamp,sizeof(c->timestamp));
+ incident_field(body,"cause",c->cause,sizeof(c->cause));
+ incident_field(body,"action",c->action,sizeof(c->action));
+ incident_field(body,"summary",c->summary,sizeof(c->summary));
+ if(!strcmp(c->summary,"UNKNOWN")){
+  n=strcspn(body,"\r\n");
+  if(n>=sizeof(c->summary))n=sizeof(c->summary)-1;
+  if(n){memcpy(c->summary,body,n);c->summary[n]=0;}
+ }
+}
+static void incident_view(int visible){
+ if(!incident_cards)return;
+ ShowWindow(incident_cards,visible?SW_SHOW:SW_HIDE);
+ ShowWindow(output_box,visible?SW_HIDE:SW_SHOW);
+}
+static void incident_history(const char *json){
+ const char *p=json;char origin[64],body[4096];
+ incident_count=0;
+ SendMessageA(incident_cards,LB_RESETCONTENT,0,0);
+ while(incident_count<sizeof(incident_rows)/sizeof(incident_rows[0])&&
+       (p=strstr(p,"\"origin\":\""))!=NULL){
+  LRESULT row;
+  if(!json_string_after(p,"origin",origin,sizeof(origin))||
+     !json_string_after(p,"body",body,sizeof(body)))break;
+  incident_from_message(&incident_rows[incident_count],origin,body);
+  row=SendMessageA(incident_cards,LB_ADDSTRING,0,(LPARAM)"");
+  if(row==LB_ERR||row==LB_ERRSPACE)break;
+  ++incident_count;p+=10;
+ }
+ InvalidateRect(incident_cards,NULL,TRUE);
+}
+static COLORREF incident_color(const char *severity){
+ if(!_stricmp(severity,"CRITICAL")||!_stricmp(severity,"ERROR"))return RGB(234,91,105);
+ if(!_stricmp(severity,"WARNING")||!_stricmp(severity,"WARN"))return RGB(246,191,73);
+ if(!_stricmp(severity,"INFO"))return RGB(91,178,240);
+ return DIGIT_MUTED;
+}
+static void incident_draw(const DRAWITEMSTRUCT *item){
+ RECT r,bar;HBRUSH bg,accent;HFONT old;char line[512];incident_card_t *c;
+ if(item->itemID==(UINT)-1||item->itemID>=incident_count)return;
+ c=&incident_rows[item->itemID];r=item->rcItem;
+ bg=CreateSolidBrush(item->itemState&ODS_SELECTED?RGB(48,65,90):DIGIT_SURFACE);
+ FillRect(item->hDC,&r,bg);DeleteObject(bg);
+ bar=r;bar.right=bar.left+5;accent=CreateSolidBrush(incident_color(c->severity));
+ FillRect(item->hDC,&bar,accent);DeleteObject(accent);
+ SetBkMode(item->hDC,TRANSPARENT);old=(HFONT)SelectObject(item->hDC,ui_font);
+ r.left+=17;r.top+=8;r.right-=10;
+ SetTextColor(item->hDC,incident_color(c->severity));
+ snprintf(line,sizeof(line),"[%s]  %s",c->severity,c->summary);
+ DrawTextA(item->hDC,line,-1,&r,DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+ r.top+=28;SetTextColor(item->hDC,DIGIT_TEXT);
+ snprintf(line,sizeof(line),"Module: %s    Subsystem: %s",c->module,c->subsystem);
+ DrawTextA(item->hDC,line,-1,&r,DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+ r.top+=27;SetTextColor(item->hDC,DIGIT_MUTED);
+ snprintf(line,sizeof(line),"Version: %s    Cause: %s",c->version,c->cause);
+ DrawTextA(item->hDC,line,-1,&r,DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
+ SelectObject(item->hDC,old);
+ if(item->itemState&ODS_FOCUS)DrawFocusRect(item->hDC,&item->rcItem);
+}
+static void incident_details(void){
+ LRESULT idx=SendMessageA(incident_cards,LB_GETCURSEL,0,0);
+ char detail[7000];incident_card_t *c;
+ if(idx==LB_ERR||(size_t)idx>=incident_count)return;
+ c=&incident_rows[idx];
+ snprintf(detail,sizeof(detail),
+  "Severity: %s\nModule: %s\nSubsystem: %s\nVersion: %s\n"
+  "Event ID: %s\nTimestamp: %s\nCause: %s\nRequired action: %s\n"
+  "Origin: %s\n\nAuthorized event text:\n%s",
+  c->severity,c->module,c->subsystem,c->version,c->event_id,
+  c->timestamp,c->cause,c->action,c->origin,c->body);
+ MessageBoxA(main_window,detail,"Digit Operations - Incident Evidence",MB_OK|MB_ICONINFORMATION);
+}
+
+static void load_history(void){char path[256],response[BUFFER_MAX],origin[64],body[4096];DWORD e,s;const char *p;if(private_chat_active||!active_channel[0])return;snprintf(path,sizeof(path),"/channels/%s/messages",active_channel);SetWindowTextW(output_box,L"");incident_count=0;SendMessageA(incident_cards,LB_RESETCONTENT,0,0);incident_view(incident_channel());if(!digit_request("GET",path,NULL,response,sizeof(response),10000,&e,&s))return;if(incident_channel()){incident_history(response);return;}p=response;while((p=strstr(p,"\"origin\":\""))!=NULL){if(!json_string_after(p,"origin",origin,sizeof(origin))||!json_string_after(p,"body",body,sizeof(body)))break;append_output(strcmp(origin,"digit")==0?"Digit":strcmp(origin,"operator")==0?"You":origin,body);p+=10;}}
 static void load_alerts(void){char response[BUFFER_MAX],id[64],severity[16],summary[256],display[384];DWORD e,s;const char *p;size_t count=0;SendMessageA(alerts_list,LB_RESETCONTENT,0,0);if(!digit_request("GET","/alerts",NULL,response,sizeof(response),10000,&e,&s))return;p=response;while(count<ALERT_MAX&&(p=strstr(p,"\"id\":\""))!=NULL){if(!json_string_after(p,"id",id,sizeof(id))||!json_string_after(p,"severity",severity,sizeof(severity))||!json_string_after(p,"summary",summary,sizeof(summary)))break;strcpy_s(alerts[count].id,sizeof(alerts[count].id),id);strcpy_s(alerts[count].severity,sizeof(alerts[count].severity),severity);strcpy_s(alerts[count].summary,sizeof(alerts[count].summary),summary);{
 const char *next=strstr(p+6,"\"id\":\"");
 const char *ack=strstr(p,"\"acknowledged\":true");
@@ -497,7 +618,9 @@ static void apply_sync(digit_sync_result_t *result){
                 const char *p=result->messages_json;
                 char origin[64],body[4096];
                 SetWindowTextW(output_box,L"");
-                while((p=strstr(p,"\"origin\":\""))!=NULL){
+                incident_view(incident_channel());
+                if(incident_channel())incident_history(result->messages_json);
+                else while((p=strstr(p,"\"origin\":\""))!=NULL){
                     if(!json_string_after(p,"origin",origin,sizeof(origin))||
                        !json_string_after(p,"body",body,sizeof(body)))break;
                     append_output(strcmp(origin,"digit")==0?"Digit":
@@ -1115,8 +1238,8 @@ security_grant_button=CreateWindowA("BUTTON","Grant Security",WS_CHILD,943,12,11
 main_users_heading=CreateWindowA("STATIC","Users - select a project",WS_CHILD|WS_VISIBLE,0,0,210,28,hwnd,NULL,NULL,NULL);
 main_users_list=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",WS_CHILD|WS_VISIBLE|WS_VSCROLL,0,0,210,280,hwnd,NULL,NULL,NULL);
 private_chat_button=CreateWindowA("BUTTON","Digit - Private Chat",WS_CHILD|WS_VISIBLE|WS_TABSTOP,12,48,170,28,hwnd,(HMENU)ID_DIGIT_PRIVATE,NULL,NULL);
-channel_list=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|LBS_NOTIFY|WS_TABSTOP,12,12,170,310,hwnd,(HMENU)ID_CHANNELS,NULL,NULL);new_channel_button=CreateWindowA("BUTTON","New Channel",WS_CHILD|WS_VISIBLE|WS_TABSTOP,12,328,170,28,hwnd,(HMENU)ID_NEW_CHANNEL,NULL,NULL);output_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL|WS_TABSTOP,194,12,560,390,hwnd,(HMENU)ID_OUTPUT,NULL,NULL);alerts_list=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",WS_CHILD|WS_VSCROLL|LBS_NOTIFY,766,12,250,310,hwnd,(HMENU)ID_ALERTS,NULL,NULL);ack_button=CreateWindowA("BUTTON","Acknowledge",WS_CHILD,766,328,120,28,hwnd,(HMENU)ID_ACK_ALERT,NULL,NULL);refresh_button=CreateWindowA("BUTTON","Refresh",WS_CHILD|WS_VISIBLE|WS_TABSTOP,896,328,120,28,hwnd,(HMENU)ID_REFRESH,NULL,NULL);input_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL|WS_TABSTOP,194,414,460,28,hwnd,(HMENU)ID_INPUT,NULL,NULL);send_button=CreateWindowA("BUTTON","Send",WS_CHILD|WS_VISIBLE|BS_DEFPUSHBUTTON|WS_TABSTOP,664,414,90,28,hwnd,(HMENU)ID_SEND,NULL,NULL);status_text=CreateWindowA("STATIC","Checking...",WS_CHILD|WS_VISIBLE,12,452,1000,20,hwnd,(HMENU)ID_STATUS,NULL,NULL);
-{ HWND controls[]={main_users_heading,main_users_list,private_chat_button,channel_list,new_channel_button,output_box,input_box,send_button,alerts_list,ack_button,refresh_button,status_text};size_t ci;for(ci=0;ci<sizeof(controls)/sizeof(controls[0]);++ci)if(controls[ci])SendMessageA(controls[ci],WM_SETFONT,(WPARAM)ui_font,TRUE);}
+channel_list=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|LBS_NOTIFY|WS_TABSTOP,12,12,170,310,hwnd,(HMENU)ID_CHANNELS,NULL,NULL);new_channel_button=CreateWindowA("BUTTON","New Channel",WS_CHILD|WS_VISIBLE|WS_TABSTOP,12,328,170,28,hwnd,(HMENU)ID_NEW_CHANNEL,NULL,NULL);output_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL|WS_TABSTOP,194,12,560,390,hwnd,(HMENU)ID_OUTPUT,NULL,NULL);incident_cards=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",WS_CHILD|WS_VSCROLL|LBS_NOTIFY|LBS_OWNERDRAWFIXED|LBS_HASSTRINGS|WS_TABSTOP,194,12,560,390,hwnd,(HMENU)ID_INCIDENT_CARDS,NULL,NULL);alerts_list=CreateWindowExA(WS_EX_CLIENTEDGE,"LISTBOX","",WS_CHILD|WS_VSCROLL|LBS_NOTIFY,766,12,250,310,hwnd,(HMENU)ID_ALERTS,NULL,NULL);ack_button=CreateWindowA("BUTTON","Acknowledge",WS_CHILD,766,328,120,28,hwnd,(HMENU)ID_ACK_ALERT,NULL,NULL);refresh_button=CreateWindowA("BUTTON","Refresh",WS_CHILD|WS_VISIBLE|WS_TABSTOP,896,328,120,28,hwnd,(HMENU)ID_REFRESH,NULL,NULL);input_box=CreateWindowExA(WS_EX_CLIENTEDGE,"EDIT","",WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL|WS_TABSTOP,194,414,460,28,hwnd,(HMENU)ID_INPUT,NULL,NULL);send_button=CreateWindowA("BUTTON","Send",WS_CHILD|WS_VISIBLE|BS_DEFPUSHBUTTON|WS_TABSTOP,664,414,90,28,hwnd,(HMENU)ID_SEND,NULL,NULL);status_text=CreateWindowA("STATIC","Checking...",WS_CHILD|WS_VISIBLE,12,452,1000,20,hwnd,(HMENU)ID_STATUS,NULL,NULL);
+{ HWND controls[]={main_users_heading,main_users_list,private_chat_button,channel_list,new_channel_button,output_box,incident_cards,input_box,send_button,alerts_list,ack_button,refresh_button,status_text};size_t ci;for(ci=0;ci<sizeof(controls)/sizeof(controls[0]);++ci)if(controls[ci])SendMessageA(controls[ci],WM_SETFONT,(WPARAM)ui_font,TRUE);}
 set_access_controls(FALSE);SetWindowTextA(status_text,"Sign in to Digit");SendMessageA(hwnd,WM_SIZE,0,MAKELPARAM(1180,560));return 0;case WM_ERASEBKGND:{RECT rc;GetClientRect(hwnd,&rc);FillRect((HDC)wparam,&rc,surface_brush);return 1;}
 case WM_CTLCOLORSTATIC:
 case WM_CTLCOLOREDIT:
@@ -1126,7 +1249,9 @@ case WM_CTLCOLORLISTBOX:{
  SetBkColor(dc,msg==WM_CTLCOLORSTATIC?DIGIT_BG:DIGIT_SURFACE);
  return (LRESULT)(msg==WM_CTLCOLORSTATIC?surface_brush:input_brush);
 }
-case WM_COMMAND:switch(LOWORD(wparam)){case ID_LOGIN:do_login();return 0;case ID_LOGOUT:do_logout();return 0;case ID_SA_CHECK:check_sa();return 0;case ID_USERS_PANEL:sa_panel_open();return 0;case ID_NEW_PROJECT:setup_project_security();return 0;case ID_BIND_SECURITY:prompt_bind_security();return 0;case ID_LIST_PROJECTS:prompt_list_projects();return 0;case ID_SECURITY_GRANT:prompt_security_grant();return 0;case ID_SEND:send_question();SetFocus(input_box);return 0;case ID_DIGIT_PRIVATE:if(session_authenticated){private_chat_active=1;SetWindowTextW(output_box,L"");append_output("Digit GUI","Private conversation with Digit. History is not yet retained; messages are visible only during this view.");SetWindowTextA(status_text,"Digit private chat");}return 0;case ID_CHANNELS:if(HIWORD(wparam)==LBN_SELCHANGE){LRESULT sel=SendMessageA(channel_list,LB_GETCURSEL,0,0);if(sel!=LB_ERR){LRESULT index=SendMessageA(channel_list,LB_GETITEMDATA,(WPARAM)sel,0);if(index!=LB_ERR&&index>=0&&(size_t)index<channel_count){private_chat_active=0;strcpy_s(active_channel,sizeof(active_channel),channels[index].id);strcpy_s(selected_org,sizeof(selected_org),channels[index].organization);strcpy_s(selected_project,sizeof(selected_project),channels[index].project);load_history();}else if(index<=-2&&(size_t)(-2-index)<channel_count){size_t project_index=(size_t)(-2-index);strcpy_s(selected_org,sizeof(selected_org),channels[project_index].organization);strcpy_s(selected_project,sizeof(selected_project),channels[project_index].project);}else if(index==-1){
+case WM_MEASUREITEM:if(((MEASUREITEMSTRUCT *)lparam)->CtlID==ID_INCIDENT_CARDS){((MEASUREITEMSTRUCT *)lparam)->itemHeight=98;return TRUE;}break;
+case WM_DRAWITEM:if(((DRAWITEMSTRUCT *)lparam)->CtlID==ID_INCIDENT_CARDS){incident_draw((DRAWITEMSTRUCT *)lparam);return TRUE;}break;
+case WM_COMMAND:switch(LOWORD(wparam)){case ID_LOGIN:do_login();return 0;case ID_LOGOUT:do_logout();return 0;case ID_SA_CHECK:check_sa();return 0;case ID_USERS_PANEL:sa_panel_open();return 0;case ID_NEW_PROJECT:setup_project_security();return 0;case ID_BIND_SECURITY:prompt_bind_security();return 0;case ID_LIST_PROJECTS:prompt_list_projects();return 0;case ID_SECURITY_GRANT:prompt_security_grant();return 0;case ID_SEND:send_question();SetFocus(input_box);return 0;case ID_DIGIT_PRIVATE:if(session_authenticated){private_chat_active=1;incident_view(0);SetWindowTextW(output_box,L"");append_output("Digit GUI","Private conversation with Digit. History is not yet retained; messages are visible only during this view.");SetWindowTextA(status_text,"Digit private chat");}return 0;case ID_INCIDENT_CARDS:if(HIWORD(wparam)==LBN_DBLCLK)incident_details();return 0;case ID_CHANNELS:if(HIWORD(wparam)==LBN_SELCHANGE){LRESULT sel=SendMessageA(channel_list,LB_GETCURSEL,0,0);if(sel!=LB_ERR){LRESULT index=SendMessageA(channel_list,LB_GETITEMDATA,(WPARAM)sel,0);if(index!=LB_ERR&&index>=0&&(size_t)index<channel_count){private_chat_active=0;strcpy_s(active_channel,sizeof(active_channel),channels[index].id);strcpy_s(selected_org,sizeof(selected_org),channels[index].organization);strcpy_s(selected_project,sizeof(selected_project),channels[index].project);load_history();}else if(index<=-2&&(size_t)(-2-index)<channel_count){size_t project_index=(size_t)(-2-index);strcpy_s(selected_org,sizeof(selected_org),channels[project_index].organization);strcpy_s(selected_project,sizeof(selected_project),channels[project_index].project);}else if(index==-1){
  char heading[240]="",scope[64]="";size_t k,unique=0,chosen=0;
  SendMessageA(channel_list,LB_GETTEXT,(WPARAM)sel,(LPARAM)heading);
  for(k=0;k<channel_count;k++){
@@ -1155,7 +1280,7 @@ MoveWindow(username_box,12,12,138,25,TRUE);MoveWindow(password_box,160,12,138,25
 MoveWindow(login_button,308,12,78,25,TRUE);MoveWindow(logout_button,396,12,78,25,TRUE);
 MoveWindow(users_button,484,12,80,25,TRUE);MoveWindow(sa_button,574,12,90,25,TRUE);MoveWindow(new_project_button,674,12,105,25,TRUE);MoveWindow(bind_security_button,699,12,112,25,TRUE);MoveWindow(list_projects_button,891,12,112,25,TRUE);MoveWindow(security_grant_button,943,12,112,25,TRUE);
 MoveWindow(private_chat_button,12,48,left,28,TRUE);MoveWindow(channel_list,12,84,left,h-202,TRUE);MoveWindow(new_channel_button,12,h-112,left,28,TRUE);
-MoveWindow(output_box,194,48,center,h-128,TRUE);MoveWindow(input_box,194,h-68,center-102,28,TRUE);
+MoveWindow(output_box,194,48,center,h-128,TRUE);MoveWindow(incident_cards,194,48,center,h-128,TRUE);MoveWindow(input_box,194,h-68,center-102,28,TRUE);
 MoveWindow(send_button,194+center-90,h-68,90,28,TRUE);
 MoveWindow(main_users_heading,w-right-6,54,right-18,24,TRUE);
 MoveWindow(main_users_list,w-right-6,82,right-18,h-164,TRUE);
@@ -1163,7 +1288,7 @@ MoveWindow(alerts_list,w,48,0,0,TRUE);
 MoveWindow(ack_button,w,h-112,0,0,TRUE);
 MoveWindow(refresh_button,w-132,h-68,120,28,TRUE);
 MoveWindow(status_text,12,h-32,w-24,20,TRUE);return 0;}case WM_DESTROY:KillTimer(hwnd,ID_SYNC_TIMER);if(ui_font)DeleteObject(ui_font);if(surface_brush)DeleteObject(surface_brush);if(input_brush)DeleteObject(input_brush);++sync_generation;clear_session();main_window=NULL;PostQuitMessage(0);return 0;}return DefWindowProcA(hwnd,msg,wparam,lparam);}
-static int self_test(void){char answer[256],value[256];int failures=0;if(!extract_answer("{\"answered\":true,\"answer\":\"Ready.\"}",answer,sizeof(answer))||strcmp(answer,"Ready.")!=0)++failures;if(!json_string_after("{\"id\":\"general\",\"name\":\"General\"}","name",value,sizeof(value))||strcmp(value,"General")!=0)++failures;if(!json_string_after("{\"severity\":\"ERROR\",\"summary\":\"Module rejected\"}","summary",value,sizeof(value))||strcmp(value,"Module rejected")!=0)++failures;return failures?1:0;}
+static int self_test(void){char answer[256],value[256];incident_card_t example;int failures=0;incident_from_message(&example,"digit","severity: ERROR\nmodule: Interface\nsubsystem: qualification persistence\nversion: 1.7.6\ncause: inventory full\nsummary: Module rejected");if(strcmp(example.module,"Interface")||strcmp(example.subsystem,"qualification persistence")||strcmp(example.cause,"inventory full")||strcmp(example.severity,"ERROR"))++failures;incident_from_message(&example,"digit","Module rejected");if(strcmp(example.module,"UNKNOWN")||strcmp(example.cause,"UNKNOWN")||strcmp(example.summary,"Module rejected"))++failures;if(!extract_answer("{\"answered\":true,\"answer\":\"Ready.\"}",answer,sizeof(answer))||strcmp(answer,"Ready.")!=0)++failures;if(!json_string_after("{\"id\":\"general\",\"name\":\"General\"}","name",value,sizeof(value))||strcmp(value,"General")!=0)++failures;if(!json_string_after("{\"severity\":\"ERROR\",\"summary\":\"Module rejected\"}","summary",value,sizeof(value))||strcmp(value,"Module rejected")!=0)++failures;return failures?1:0;}
 int WINAPI WinMain(HINSTANCE instance,HINSTANCE previous,LPSTR command_line,int show){WNDCLASSA wc={0};HWND hwnd;MSG msg;(void)previous;(void)command_line;if(!load_config()){MessageBoxA(NULL,"Unable to load digit.conf beside digit-gui.exe. Expected host=<server> and port=<port>.",APP_TITLE,MB_OK|MB_ICONERROR);return 1;}wc.lpfnWndProc=window_proc;wc.hInstance=instance;wc.lpszClassName="DigitGuiWindow";wc.hCursor=LoadCursor(NULL,IDC_ARROW);wc.hbrBackground=(HBRUSH)(COLOR_WINDOW+1);if(!RegisterClassA(&wc))return 1;hwnd=CreateWindowExA(0,wc.lpszClassName,APP_TITLE,WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,1180,560,NULL,NULL,instance,NULL);if(!hwnd)return 1;ShowWindow(hwnd,show);UpdateWindow(hwnd);/* [AI:GPT-6 | 2026-10-09] Native keyboard workflow: Tab navigates enabled visible controls; Enter submits the focused login or message field. */
 while(GetMessageA(&msg,NULL,0,0)>0){
     HWND focus=GetFocus();
