@@ -605,15 +605,27 @@ static void incident_draw(const DRAWITEMSTRUCT *item){
 }
 static void incident_details(void){
  LRESULT idx=SendMessageA(incident_cards,LB_GETCURSEL,0,0);
- char detail[7000];incident_card_t *c;
+ char detail[7000],reported[256],status[256];incident_card_t *c;
  if(idx==LB_ERR||(size_t)idx>=incident_count)return;
  c=&incident_rows[idx];
+ incident_field(c->body,"detail",reported,sizeof(reported));
+ incident_field(c->body,"operational_state",status,sizeof(status));
  snprintf(detail,sizeof(detail),
-  "Severity: %s\nModule: %s\nSubsystem: %s\nVersion: %s\n"
-  "Event ID: %s\nTimestamp: %s\nCause: %s\nRequired action: %s\n"
-  "Origin: %s\n\nAuthorized event text:\n%s",
-  c->severity,c->module,c->subsystem,c->version,c->event_id,
-  c->timestamp,c->cause,c->action,c->origin,c->body);
+  "Incident: %s\n"
+  "Severity: %s\n"
+  "Reporting subsystem: %s\n"
+  "Reported module: %s\n"
+  "Reported version: %s\n"
+  "Reported failure evidence: %s\n"
+  "Reported cause: %s\n"
+  "Event ID: %s\nTimestamp: %s\n"
+  "Required action: %s\nOrigin: %s\n\n"
+  "Evidence limitations: Fields marked UNKNOWN were not supplied by the source. "
+  "START_FAILED is an activation result, not an established underlying cause. "
+  "This historical record does not prove a current failure.\n\n"
+  "Original authorized event text:\n%s",
+  c->summary,c->severity,c->subsystem,c->module,c->version,
+  reported,c->cause,c->event_id,c->timestamp,c->action,c->origin,c->body);
  MessageBoxA(main_window,detail,"Digit Operations - Incident Evidence",MB_OK|MB_ICONINFORMATION);
 }
 
@@ -1354,7 +1366,7 @@ MoveWindow(alerts_list,w,48,0,0,TRUE);
 MoveWindow(ack_button,w,h-112,0,0,TRUE);
 MoveWindow(refresh_button,w-132,h-68,120,28,TRUE);
 MoveWindow(status_text,12,h-32,w-24,20,TRUE);return 0;}case WM_DESTROY:KillTimer(hwnd,ID_SYNC_TIMER);if(ui_font)DeleteObject(ui_font);if(surface_brush)DeleteObject(surface_brush);if(input_brush)DeleteObject(input_brush);++sync_generation;clear_session();main_window=NULL;PostQuitMessage(0);return 0;}return DefWindowProcA(hwnd,msg,wparam,lparam);}
-static int self_test(void){char answer[256],value[256];incident_card_t example;int failures=0;incident_from_message(&example,"digit","severity: ERROR\nmodule: Interface\nsubsystem: qualification persistence\nversion: 1.7.6\ncause: inventory full\nsummary: Module rejected");if(strcmp(example.module,"Interface")||strcmp(example.subsystem,"qualification persistence")||strcmp(example.cause,"inventory full")||strcmp(example.severity,"ERROR"))++failures;incident_from_message(&example,"digit","severity: ERROR\\nsummary: Module activation degraded Digit capability\\nmodule: UNKNOWN\\nsubsystem: UNKNOWN\\nversion: UNKNOWN\\nevent_id: alert-17\\ntimestamp: 1791649947\\ncause: UNKNOWN\\naction: UNKNOWN\\ndetail: result=START_FAILED core_continuing=true");if(strcmp(example.severity,"ERROR")||strcmp(example.summary,"Module activation degraded Digit capability")||strcmp(example.event_id,"alert-17")||strcmp(example.module,"UNKNOWN")||strstr(example.body,"\\n"))++failures;incident_from_message(&example,"digit","2026-10-10T03:18:21Z MODULE UPDATE_CANDIDATE sequence=13 module=interface module=interface");if(strcmp(example.module,"interface"))++failures;incident_from_message(&example,"digit","MODULE UPDATE_CANDIDATE module=interface module=validator");if(strcmp(example.module,"UNKNOWN"))++failures;incident_from_message(&example,"digit","Module rejected");if(strcmp(example.module,"UNKNOWN")||strcmp(example.cause,"UNKNOWN")||strcmp(example.summary,"Module rejected"))++failures;if(!extract_answer("{\"answered\":true,\"answer\":\"Ready.\"}",answer,sizeof(answer))||strcmp(answer,"Ready.")!=0)++failures;if(!json_string_after("{\"id\":\"general\",\"name\":\"General\"}","name",value,sizeof(value))||strcmp(value,"General")!=0)++failures;if(!json_string_after("{\"severity\":\"ERROR\",\"summary\":\"Module rejected\"}","summary",value,sizeof(value))||strcmp(value,"Module rejected")!=0)++failures;return failures?1:0;}
+static int self_test(void){char answer[256],value[256];incident_card_t example;int failures=0;incident_from_message(&example,"digit","severity: ERROR\nmodule: Interface\nsubsystem: qualification persistence\nversion: 1.7.6\ncause: inventory full\nsummary: Module rejected");if(strcmp(example.module,"Interface")||strcmp(example.subsystem,"qualification persistence")||strcmp(example.cause,"inventory full")||strcmp(example.severity,"ERROR"))++failures;incident_from_message(&example,"digit","severity: ERROR\\nsummary: Module activation degraded Digit capability\\nmodule: UNKNOWN\\nsubsystem: UNKNOWN\\nversion: UNKNOWN\\nevent_id: alert-17\\ntimestamp: 1791649947\\ncause: UNKNOWN\\naction: UNKNOWN\\ndetail: result=START_FAILED core_continuing=true");if(strcmp(example.severity,"ERROR")||strcmp(example.summary,"Module activation degraded Digit capability")||strcmp(example.event_id,"alert-17")||strcmp(example.module,"UNKNOWN")||strstr(example.body,"\\n"))++failures;incident_field(example.body,"detail",value,sizeof(value));if(strcmp(value,"result=START_FAILED core_continuing=true"))++failures;incident_from_message(&example,"digit","2026-10-10T03:18:21Z MODULE UPDATE_CANDIDATE sequence=13 module=interface module=interface");if(strcmp(example.module,"interface"))++failures;incident_from_message(&example,"digit","MODULE UPDATE_CANDIDATE module=interface module=validator");if(strcmp(example.module,"UNKNOWN"))++failures;incident_from_message(&example,"digit","Module rejected");if(strcmp(example.module,"UNKNOWN")||strcmp(example.cause,"UNKNOWN")||strcmp(example.summary,"Module rejected"))++failures;if(!extract_answer("{\"answered\":true,\"answer\":\"Ready.\"}",answer,sizeof(answer))||strcmp(answer,"Ready.")!=0)++failures;if(!json_string_after("{\"id\":\"general\",\"name\":\"General\"}","name",value,sizeof(value))||strcmp(value,"General")!=0)++failures;if(!json_string_after("{\"severity\":\"ERROR\",\"summary\":\"Module rejected\"}","summary",value,sizeof(value))||strcmp(value,"Module rejected")!=0)++failures;return failures?1:0;}
 int WINAPI WinMain(HINSTANCE instance,HINSTANCE previous,LPSTR command_line,int show){WNDCLASSA wc={0};HWND hwnd;MSG msg;(void)previous;(void)command_line;if(!load_config()){MessageBoxA(NULL,"Unable to load digit.conf beside digit-gui.exe. Expected host=<server> and port=<port>.",APP_TITLE,MB_OK|MB_ICONERROR);return 1;}wc.lpfnWndProc=window_proc;wc.hInstance=instance;wc.lpszClassName="DigitGuiWindow";wc.hCursor=LoadCursor(NULL,IDC_ARROW);wc.hbrBackground=(HBRUSH)(COLOR_WINDOW+1);if(!RegisterClassA(&wc))return 1;hwnd=CreateWindowExA(0,wc.lpszClassName,APP_TITLE,WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,1180,560,NULL,NULL,instance,NULL);if(!hwnd)return 1;ShowWindow(hwnd,show);UpdateWindow(hwnd);/* [AI:GPT-6 | 2026-10-09] Native keyboard workflow: Tab navigates enabled visible controls; Enter submits the focused login or message field. */
 while(GetMessageA(&msg,NULL,0,0)>0){
     HWND focus=GetFocus();
