@@ -598,18 +598,18 @@ static void incident_draw(const DRAWITEMSTRUCT *item){
  snprintf(line,sizeof(line),"Module: %s    Subsystem: %s",c->module,c->subsystem);
  DrawTextA(item->hDC,line,-1,&r,DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
  r.top+=27;SetTextColor(item->hDC,DIGIT_MUTED);
- snprintf(line,sizeof(line),"Version: %s    Cause: %s",c->version,c->cause);
+ {char evidence[256];incident_field(c->body,"detail",evidence,sizeof(evidence));
+ snprintf(line,sizeof(line),"Version: %s    Failure evidence: %s",c->version,evidence); }
  DrawTextA(item->hDC,line,-1,&r,DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);
  SelectObject(item->hDC,old);
  if(item->itemState&ODS_FOCUS)DrawFocusRect(item->hDC,&item->rcItem);
 }
 static void incident_details(void){
  LRESULT idx=SendMessageA(incident_cards,LB_GETCURSEL,0,0);
- char detail[7000],reported[256],status[256];incident_card_t *c;
+ char detail[7000],reported[256];incident_card_t *c;
  if(idx==LB_ERR||(size_t)idx>=incident_count)return;
  c=&incident_rows[idx];
  incident_field(c->body,"detail",reported,sizeof(reported));
- incident_field(c->body,"operational_state",status,sizeof(status));
  snprintf(detail,sizeof(detail),
   "Incident: %s\n"
   "Severity: %s\n"
