@@ -117,13 +117,13 @@ static void send_message(void){
  CloseHandle(thread);
 }
 static void relayout(int w,int h){
- int margin=24,bottom=24,composer_h=84,header_h=70;
+ int margin=24,bottom=46,composer_h=84,header_h=70;
  int composer_y=h-bottom-composer_h;
  if(w<420)margin=12;
  MoveWindow(transcript,margin,header_h,w-2*margin,composer_y-header_h-12,TRUE);
  MoveWindow(prompt,margin,composer_y,w-2*margin-104,composer_h-16,TRUE);
  MoveWindow(send_button,w-margin-92,composer_y+8,92,42,TRUE);
- MoveWindow(status_line,margin,h-20,w-2*margin,18,TRUE);
+ MoveWindow(status_line,margin,h-34,w-2*margin,25,TRUE);
 }
 static LRESULT CALLBACK wndproc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp){
  switch(message){
@@ -179,7 +179,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp){
  return DefWindowProcW(hwnd,message,wp,lp);
 }
 int main(int argc,char **argv){
- WNDCLASSW wc={0};MSG msg;RECT rect={0,0,980,740};
+ WNDCLASSW wc={0};MSG msg;RECT rect={0,0,980,820};
  (void)argv;
  if(argc==2&&strcmp(argv[1],"--self-test")==0){
   char output[80];
