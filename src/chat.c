@@ -27,8 +27,27 @@ typedef struct {char question[MAX_TEXT];} chat_job_t;
 
 static void append_chat(const char *label,const char *message){
  char text[8192];wchar_t wide[8192];int end;
- if(!transcript||!message)return;
- snprintf(text,sizeof text,"%s: %s\n\n",label,message);
+ size_t i=0,j=0;
+ int digit_reply;
+ if(!transcript||!message||!label)return;
+ digit_reply=strcmp(label,"Digit")==0;
+ while(label[i]&&j+1<sizeof text)text[j++]=label[i++];
+ if(j+2>=sizeof text)return;
+ text[j++]=':';text[j++]=' ';
+ for(i=0;message[i]&&j+3<sizeof text;i++){
+  /* DSD currently supplies literal backslash-n. Decode it only in Digit replies. */
+  if(digit_reply&&message[i]=='\\'&&message[i+1]=='n'){
+   text[j++]='\r';text[j++]='\n';i++;
+  }else if(message[i]=='\r'){
+   text[j++]='\r';
+   if(message[i+1]=='\n')i++;
+   text[j++]='\n';
+  }else if(message[i]=='\n'){
+   text[j++]='\r';text[j++]='\n';
+  }else text[j++]=message[i];
+ }
+ text[j++]='\r';text[j++]='\n';
+ text[j++]='\r';text[j++]='\n';text[j]=0;
  if(!MultiByteToWideChar(CP_UTF8,0,text,-1,wide,(int)(sizeof wide/sizeof wide[0])))return;
  end=GetWindowTextLengthW(transcript);
  SendMessageW(transcript,EM_SETSEL,end,end);
