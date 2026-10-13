@@ -88,7 +88,7 @@ static DWORD WINAPI send_worker(void *ctx){
 fail:
  result->error=GetLastError();
  snprintf(result->answer,sizeof result->answer,
-  "Digit is not available for chat yet (WinHTTP %lu). The Interface module currently provides TLS connections only; a chat protocol still needs to be connected through Router.",
+  "Unable to reach Digit chat (WinHTTP %lu). Check Interface and Ask activation on the server.",
   (unsigned long)result->error);
 finish:
  if(req)WinHttpCloseHandle(req);
@@ -146,7 +146,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp){
   SendMessageW(prompt,WM_SETFONT,(WPARAM)ui_font,TRUE);
   SendMessageW(send_button,WM_SETFONT,(WPARAM)ui_font,TRUE);
   SendMessageW(status_line,WM_SETFONT,(WPARAM)ui_font,TRUE);
-  append_chat("Digit","Chat interface ready. Secure transport is available; conversation requests require a compatible Digit chat service.");
+  append_chat("Digit","Chat interface ready. Type a message below to contact Digit.");
   return 0;}
  case WM_SIZE:relayout(LOWORD(lp),HIWORD(lp));return 0;
  case WM_COMMAND:
