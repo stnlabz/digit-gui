@@ -20,8 +20,9 @@ static HBRUSH bg_brush, entry_brush;
 static char server_host[256]="digit.stn-labz.com";
 static INTERNET_PORT server_port=8081;
 static LONG pending;
+static char conversation_token[33];
 
-typedef struct {DWORD error,code;int ok;char answer[MAX_TEXT];} chat_result_t;
+typedef struct {DWORD error,code;int ok;char answer[MAX_TEXT];char token[33];} chat_result_t;
 typedef struct {char question[MAX_TEXT];} chat_job_t;
 
 static void append_chat(const char *label,const char *message){
@@ -64,6 +65,11 @@ static DWORD WINAPI send_worker(void *ctx){
  req=WinHttpOpenRequest(connection,L"POST",L"/ask",NULL,WINHTTP_NO_REFERER,
                         WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE);
  if(!req)goto fail;
+ if(conversation_token[0]){
+  WCHAR header[96];
+  if(swprintf_s(header,96,L"X-Digit-Conversation: %hs\r\n",conversation_token)<0||
+     !WinHttpAddRequestHeaders(req,header,(DWORD)-1L,WINHTTP_ADDREQ_FLAG_ADD))goto fail;
+ }
  if(!WinHttpSendRequest(req,L"Content-Type: text/plain\r\n",(DWORD)-1L,
                        job->question,(DWORD)strlen(job->question),
                        (DWORD)strlen(job->question),0))goto fail;
@@ -71,6 +77,20 @@ static DWORD WINAPI send_worker(void *ctx){
  if(!WinHttpQueryHeaders(req,WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,
                          WINHTTP_HEADER_NAME_BY_INDEX,&result->code,&code_size,
                          WINHTTP_NO_HEADER_INDEX))goto fail;
+ {
+  WCHAR token_w[64];DWORD token_bytes=sizeof token_w;
+  if(WinHttpQueryHeaders(req,WINHTTP_QUERY_CUSTOM,L"X-Digit-Conversation",
+       token_w,&token_bytes,WINHTTP_NO_HEADER_INDEX)){
+   char token_a[33];size_t k;
+   if(WideCharToMultiByte(CP_UTF8,0,token_w,-1,token_a,sizeof token_a,NULL,NULL)>0&&
+      strlen(token_a)==32){
+    int valid=1;
+    for(k=0;k<32;k++)if(!((token_a[k]>='0'&&token_a[k]<='9')||
+        (token_a[k]>='a'&&token_a[k]<='f')))valid=0;
+    if(valid)memcpy(result->token,token_a,33);
+   }
+  }
+ }
  do{
   if(!WinHttpQueryDataAvailable(req,&available))goto fail;
   if(!available)break;
@@ -154,6 +174,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp){
   return 0;
  case WM_CHAT_REPLY:{
   chat_result_t *r=(chat_result_t *)lp;
+  if(r->token[0])memcpy(conversation_token,r->token,sizeof conversation_token);
   append_chat("Digit",r->answer);
   SetWindowTextA(status_line,r->ok?"Ready":"Connection unavailable");
   free(r);InterlockedExchange(&pending,0);EnableWindow(send_button,TRUE);
