@@ -27,7 +27,7 @@ typedef struct {char question[MAX_TEXT];} chat_job_t;
 static void append_chat(const char *label,const char *message){
  char text[8192];wchar_t wide[8192];int end;
  if(!transcript||!message)return;
- snprintf(text,sizeof text,"%s\n%s\n\n",label,message);
+ snprintf(text,sizeof text,"%s: %s\n\n",label,message);
  if(!MultiByteToWideChar(CP_UTF8,0,text,-1,wide,(int)(sizeof wide/sizeof wide[0])))return;
  end=GetWindowTextLengthW(transcript);
  SendMessageW(transcript,EM_SETSEL,end,end);
